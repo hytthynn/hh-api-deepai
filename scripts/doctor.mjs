@@ -111,26 +111,28 @@ else record('playwright', 'не найден', 'warn', 'pip install playwright')
 
 /* ---------------- chrome ---------------- */
 
-function chromeFromDpcode() {
-  const path = join(ROOT, 'engine', 'dpcode.py');
-  if (!existsSync(path)) return null;
-  const match = readFileSync(path, 'utf8').match(/^\s*CHROME\s*=\s*r?["']([^"']+)["']/m);
-  return match ? match[1] : null;
+/** Same source of truth as `/api/engine`: `engine/worker.py --selftest` reports the browser OAuth launches. */
+function chromeFromWorker() {
+  if (!pythonName) return null;
+  const probe = run(pythonName, ['engine/worker.py --selftest'], 60_000);
+  if (!probe.ok) return null;
+  const match = probe.out.match(/\{"event":"hello".*\}/);
+  if (!match) return null;
+  try {
+    const hello = JSON.parse(match[0]);
+    return hello.chrome_ok ? { path: String(hello.chrome), source: String(hello.chrome_source ?? 'chrome') } : null;
+  } catch {
+    return null;
+  }
 }
 
-const chromeCandidates = [
-  envValue('HH_CHROME'),
-  chromeFromDpcode(),
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  join(process.env.LOCALAPPDATA ?? '', 'Google/Chrome/Application/chrome.exe'),
-  '/usr/bin/google-chrome',
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-].filter(Boolean);
-
-const chromePath = chromeCandidates.find((candidate) => existsSync(candidate));
-if (chromePath) record('chrome', chromePath, 'ok', '');
-else record('chrome', 'не найден', 'warn', 'кнопка «Добавить аккаунты» будет заблокирована');
+const workerChrome = chromeFromWorker();
+const chromePath = workerChrome?.path ?? null;
+if (chromePath) {
+  record('chrome', chromePath, 'ok', workerChrome?.source === 'playwright' ? '(Chromium из Playwright)' : '');
+} else {
+  record('chrome', 'не найден', 'warn', 'кнопка «Добавить аккаунты» будет заблокирована до playwright install chromium');
+}
 
 /* ---------------- data/ writable ---------------- */
 

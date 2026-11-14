@@ -14,6 +14,7 @@ export type WorkerHello = {
   playwright: string;
   chrome: string;
   chrome_ok: boolean;
+  chrome_source?: 'chrome' | 'playwright' | 'none';
   error?: string;
 };
 

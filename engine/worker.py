@@ -30,6 +30,29 @@ def emit_stage(command_id, stage, detail=None):
     emit(event)
 
 
+def playwright_chromium():
+    """Chromium bundled with Playwright: what `launch_persistent_context()` uses without Chrome."""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            path = p.chromium.executable_path
+        return path if path and os.path.exists(path) else None
+    except Exception:
+        return None
+
+
+def browser_executable():
+    """(path, source) for the browser OAuth will actually launch, or (None, 'none')."""
+    chrome = D.chrome_path()
+    if chrome:
+        return chrome, "chrome"
+    bundled = playwright_chromium()
+    if bundled:
+        return bundled, "playwright"
+    return None, "none"
+
+
 def hello():
     playwright_version = "unknown"
     try:
@@ -37,13 +60,14 @@ def hello():
         playwright_version = importlib.metadata.version("playwright")
     except Exception:
         pass
-    chrome = D.CHROME if os.path.exists(D.CHROME) else None
+    chrome, source = browser_executable()
     emit({
         "event": "hello",
         "python": sys.version.split()[0],
         "playwright": playwright_version,
         "chrome": chrome or "playwright-managed",
         "chrome_ok": chrome is not None,
+        "chrome_source": source,
     })
 
 
@@ -100,6 +124,8 @@ def register(command):
 
 def main():
     hello()
+    if "--selftest" in sys.argv:
+        return
     for line in sys.stdin:
         raw = line.strip()
         if not raw:

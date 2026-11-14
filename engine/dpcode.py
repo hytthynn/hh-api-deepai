@@ -18,7 +18,26 @@ ROOT = os.path.dirname(ENGINE_DIR)          # данные (bank.jsonl, accounts
 BANK = os.path.join(ROOT, "bank.jsonl")
 API = "https://api.deepai.org"
 OAUTH_START = API + "/accounts/google/login/?process=login"
-CHROME = r"C:/Program Files/Google/Chrome/Application/chrome.exe"
+CHROME_CANDIDATES = [
+    os.environ.get("HH_CHROME"),
+    r"C:/Program Files/Google/Chrome/Application/chrome.exe",
+    r"C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+    os.path.join(os.environ.get("LOCALAPPDATA") or "", "Google", "Chrome", "Application", "chrome.exe"),
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+]
+
+
+def chrome_path():
+    """First installed Chrome, or None. Playwright's own Chromium is resolved by worker.py."""
+    for candidate in CHROME_CANDIDATES:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+CHROME = chrome_path() or r"C:/Program Files/Google/Chrome/Application/chrome.exe"
 
 FREE_MODELS = [
     "glm-5.3-flash", "deepseek-v4.1-flash", "mimo-2.6-flash", "qwen-3.8-flash",
