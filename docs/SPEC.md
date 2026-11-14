@@ -473,7 +473,7 @@ HH_MEASURE_THEOS=0
 | POST | `/api/accounts/check-all` | фоновая проверка всех |
 | POST | `/api/jobs` | `{type:"provision",quantity,productId?,workers?,headless?,proxy?}` → `{jobId}` |
 | GET | `/api/jobs/:id` | прогресс + items |
-| POST | `/api/jobs/:id/cancel` | отмена (текущий аккаунт добивается) |
+| POST | `/api/jobs/:id/cancel` | отмена: `cancelled` сразу, in-flight регистрация прерывается, item возвращается в `purchased` (ADR-018) |
 | GET | `/api/keys` | список без секретов |
 | POST | `/api/keys` | `{name,rpmLimit}` → `{key:"hh-api-…"}` (единственный раз) |
 | DELETE | `/api/keys/:id` | отзыв (`revoked_at`) |
@@ -773,6 +773,7 @@ pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──и�
 
 Шаги:
 
+0. Preflight: `GET /api/engine` (handshake воркера) — без `chrome_ok:true` job не создаётся и деньги не тратятся (`engine_not_ready`, 400).
 1. `POST /api/settings/bm/test` неявно: `GET /wallet/balance`; при ошибке — job `failed` без списаний.
 2. `GET /products/578` → имя, цена, `allowed_quantities`; показать оценку `quantity × price`.
 3. `POST /orders {product_id, quantity}`.
@@ -784,7 +785,7 @@ pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──и�
 
 Повторный запуск с теми же логинами не создаёт дублей: `accounts.email UNIQUE`, item пропускается со `stage='ok'` и пометкой `reused`.
 
-Отмена: `status='cancelled'`; уже купленные логины остаются в `job_items` и могут быть дорегистрированы новым запуском (`POST /api/jobs {type:"provision", resumeJobId}` — необязательное поле).
+Отмена: `status='cancelled'` пишется в БД до остановки раннера, затем in-flight `register` прерывается (`AbortSignal`, worker убивает Chrome); незавершённый item возвращается в `stage='purchased'`, уже купленные логины остаются в `job_items` и могут быть дорегистрированы новым запуском (`POST /api/jobs {type:"provision", resumeJobId}` — необязательное поле).
 
 ### 17.2 Интеграция BM
 
@@ -821,8 +822,10 @@ pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──и�
 Handshake при старте:
 
 ```json
-{"event":"hello","python":"3.12.4","playwright":"1.49.0","chrome":"C:/Program Files/Google/Chrome/Application/chrome.exe","chrome_ok":true}
+{"event":"hello","python":"3.12.4","playwright":"1.49.0","chrome":"C:/Program Files/Google/Chrome/Application/chrome.exe","chrome_ok":true,"chrome_source":"chrome"}
 ```
+
+`chrome` — тот бинарь, который реально запустит OAuth: Chrome из `HH_CHROME`/стандартных путей (`chrome_source:"chrome"`) либо Chromium из Playwright (`chrome_source:"playwright"`). `chrome_ok:false` (и `chrome_source:"none"`) — браузера нет, provision блокируется (ADR-018, B-020). `python engine/worker.py --selftest` печатает тот же hello и выходит.
 
 Команда:
 
