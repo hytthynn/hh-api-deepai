@@ -11,7 +11,7 @@
 | Node.js >= 20.9 | да | приложение |
 | Python 3.11+ | для регистрации | `engine/worker.py` |
 | Playwright для Python | для регистрации | браузерная автоматизация |
-| Chrome (или `playwright install chrome`) | для регистрации | OAuth-волна |
+| Chrome или Chromium из Playwright (`playwright install chromium`) | для регистрации | OAuth-волна |
 | Ключ BM (bulkmail.shop) | для покупки логинов | пополнение аккаунтов |
 
 Шлюз и панель работают и без Python/Chrome: купленные или вручную добавленные аккаунты обслуживаются, недоступна только автопокупка с регистрацией.
@@ -33,10 +33,12 @@ npm run dev             # http://127.0.0.1:3210
 
 ```powershell
 pip install playwright
+python -m playwright install chromium   # браузер Playwright: рабочий вариант без установленного Chrome
+# или, если нужен именно Google Chrome:
 python -m playwright install chrome
 ```
 
-`GET /api/engine` (или индикатор в сайдбаре) показывает `chrome_ok`. Пока `false`, кнопка «Добавить аккаунты» заблокирована с пояснением.
+`GET /api/engine` (или индикатор в сайдбаре) показывает `chrome_ok`: проверяется тот браузер, который реально запустит OAuth (Chrome из `HH_CHROME`/стандартных путей либо Chromium из Playwright). Пока `false`, кнопка «Добавить аккаунты» заблокирована с пояснением.
 
 ## Первый запуск
 
@@ -118,7 +120,7 @@ legacy/         старый HTTP-шлюз (справочно, не испол�
 | Симптом | Причина | Что делать |
 |---|---|---|
 | `/healthz` → 503 `db_locked` | запущен второй экземпляр | закрыть лишний процесс; лок забирается у мёртвого pid автоматически |
-| `chrome_ok: false` | нет Chrome или Playwright | `python -m playwright install chrome`, затем `GET /api/engine?refresh=1` |
+| `chrome_ok: false` | нет ни Chrome, ни браузера Playwright | `python -m playwright install chromium` (или `chrome`), затем `GET /api/engine?refresh=1` |
 | `429 no_account_available` | нет живых аккаунтов под модель | добавить/проверить аккаунты, проверить баланс |
 | `401 invalid_api_key` | ключ отозван или скопирован с обрезкой | выпустить новый ключ |
 | `403 social_login_required` | аккаунт email-типа | такие аккаунты не годятся, только Google/Apple OAuth |
