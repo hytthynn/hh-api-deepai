@@ -7,7 +7,6 @@ const config = [
       'node_modules/**',
       'data/**',
       'prof/**',
-      'legacy/**',
       'engine/**',
       'drizzle/**',
       'next-env.d.ts',
