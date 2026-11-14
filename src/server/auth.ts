@@ -1,6 +1,7 @@
 import 'server-only';
 import { env, ORIGIN } from '@/src/lib/config';
 import { hmacSha256Base64Url, passwordHash, passwordVerify, safeEqual } from '@/src/lib/crypto';
+import { globalState } from '@/src/lib/global-state';
 import { getSetting, setSetting } from '@/src/adapters/db/repositories/settings';
 
 export const SESSION_COOKIE = 'hh_session';
@@ -11,7 +12,11 @@ const LOGIN_MAX_ATTEMPTS = 5;
 type SessionPayload = { sub: 'admin'; iat: number; exp: number };
 
 type AttemptBucket = { count: number; resetAt: number };
-const attempts = new Map<string, AttemptBucket>();
+
+/** Shared across module graphs (ADR-017): otherwise every route graph gets its own 5 attempts. */
+function attempts(): Map<string, AttemptBucket> {
+  return globalState('login-attempts', () => new Map<string, AttemptBucket>());
+}
 
 export function signSession(now = Date.now()): string {
   const payload: SessionPayload = { sub: 'admin', iat: now, exp: now + SESSION_TTL_MS };
@@ -77,26 +82,26 @@ export function changeAdminPassword(password: string): void {
 }
 
 export function loginAllowed(ip: string, now = Date.now()): boolean {
-  const bucket = attempts.get(ip);
+  const bucket = attempts().get(ip);
   if (!bucket) return true;
   if (bucket.resetAt <= now) {
-    attempts.delete(ip);
+    attempts().delete(ip);
     return true;
   }
   return bucket.count < LOGIN_MAX_ATTEMPTS;
 }
 
 export function noteLoginFailure(ip: string, now = Date.now()): void {
-  const bucket = attempts.get(ip);
+  const bucket = attempts().get(ip);
   if (!bucket || bucket.resetAt <= now) {
-    attempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    attempts().set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
     return;
   }
   bucket.count += 1;
 }
 
 export function resetLoginAttempts(): void {
-  attempts.clear();
+  attempts().clear();
 }
 
 /**
