@@ -75,6 +75,11 @@ export function classifyFailure(input: FailureInput): FailureClass {
   if (lower.includes('social_login_required')) {
     return fail('social_login_required', false, false, false, 0, 'dead', 403, 'social_login_required');
   }
+  // B-026: a refused check-in closes only `/deepai_code/theos`; the same cookies still serve
+  // `/models` and `/chat/completions`, so this is a temporary gate, not a broken session.
+  if (lower.includes('check_in_refused')) {
+    return fail('rate_limit', true, false, false, 120_000, 'cooldown', status, 'upstream_check_in_refused');
+  }
   if (status === 401 || status === 403) {
     return fail('auth', true, false, false, 600_000, 'cooldown', status, 'upstream_auth');
   }

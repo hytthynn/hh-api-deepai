@@ -49,6 +49,24 @@ describe('failover: SPEC §16.2 table', () => {
     expect(nextAuthState({ failCount: 10 })).toEqual({ dead: true, failCount: 11 });
   });
 
+  it('403 check_in_refused → transient cooldown, never an auth failure (B-026)', () => {
+    const failure = classifyFailure({
+      status: 403,
+      bodyText:
+        '{"error":{"message":"DeepAI models are temporarily unavailable. Try again later.","type":"check_in_refused","code":"check_in_refused"}}',
+    });
+    expect(failure).toMatchObject({
+      kind: 'rate_limit',
+      nextAccount: true,
+      sameAccount: false,
+      fatal: false,
+      cooldownMs: 120_000,
+      accountAction: 'cooldown',
+      status: 403,
+      code: 'upstream_check_in_refused',
+    });
+  });
+
   it('social_login_required → dead, no retry', () => {
     const failure = classifyFailure({ status: 403, bodyText: '{"error":"social_login_required"}' });
     expect(failure).toMatchObject({

@@ -721,7 +721,8 @@ type ChatRequest = {
 |---|---|---|
 | `200` | успех, `success_count++`, `last_used_at=now` | — |
 | `400`, `422` (кроме `session_busy`) | вернуть клиенту как есть, без ретрая | — |
-| `401`, `403` (кроме `machine_required`, `social_login_required`) | `fail_count++`; при `fail_count>=3` → `dead`, иначе cooldown | 10 мин |
+| `401`, `403` (кроме `machine_required`, `social_login_required`, `check_in_refused`) | `fail_count++`; при `fail_count>=3` → `dead`, иначе cooldown | 10 мин |
+| `403` + `check_in_refused` | check-in временно закрыт: следующий аккаунт, `fail_count` не меняется; в `probe` аккаунт проверяется чатом (B-026) | 2 мин |
 | `social_login_required` | `dead` (логин протух, нужна перерегистрация) | — |
 | `machine_required` | ротация machine-id (соль `email + random`), повтор на том же аккаунте, максимум 2 раза | 5 с |
 | `409` / `session_busy` | следующий аккаунт | `Retry-After` или 3 с (клэмп 1..60) |
@@ -746,7 +747,7 @@ type ChatRequest = {
 pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──истёк──▶ active
    │                    │                    │
    │                    ├──balance=0──▶ exhausted ──balance>0/refresh_at──▶ active
-   │                    └──3×401/403──▶ dead
+   │                    └──3×401/403 (кроме check_in_refused)──▶ dead
    └──probe fail──▶ dead
 любое ──вручную──▶ disabled ──вручную──▶ active
 ```
@@ -761,6 +762,7 @@ pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──и�
 - Вручную: кнопка у аккаунта и «Проверить все».
 - Расход Theos считается по `balance_samples`: `spent = Σ max(0, prev.balance − cur.balance)` за интервал; рост баланса трактуется как refresh и в расход не входит.
 - При `balance=0` и `refresh_at` в будущем аккаунт остаётся `exhausted`; после `refresh_at + 60 с` — плановая проверка.
+- `403 check_in_refused` от `/theos` не означает мёртвую сессию (B-026): те же cookies обслуживают `/models` и `/chat/completions`. Probe в этом случае делает короткий чат, при `200` помечает аккаунт `active` (в том числе возвращает `dead` в строй) и не увеличивает `fail_count`.
 
 ---
 

@@ -22,7 +22,7 @@ import {
 } from '@/src/adapters/db/repositories/accounts';
 import { addBalanceSample } from '@/src/adapters/db/repositories/balance';
 import { getModel, listModels } from '@/src/adapters/db/repositories/models';
-import { credentialsOf, applyFailure } from '@/src/server/gateway/accounts';
+import { credentialsOf, applyFailure, markSuccess } from '@/src/server/gateway/accounts';
 import { logger } from '@/src/lib/logger';
 import { beginRun, endRun } from './runner';
 
@@ -63,6 +63,35 @@ async function chatCheck(account: Account, signal: AbortSignal): Promise<{ ok: b
 }
 
 /**
+ * B-026: `/theos` can answer 403 `check_in_refused` ("models are temporarily unavailable")
+ * while the same cookies still serve `/chat/completions`. The check-in gate therefore says
+ * nothing about the session, so chat is the authority: a refusal never touches `fail_count`
+ * and never marks the account dead.
+ */
+async function probeCheckInRefused(account: Account, signal: AbortSignal): Promise<ProbeOutcome> {
+  const chat = await chatCheck(account, signal);
+  if (chat.ok) {
+    markSuccess(account);
+    logger.warn('accounts', `probe ${account.email}: theos check_in_refused, chat ok → active`, {
+      accountId: account.id,
+      meta: { status: 403 },
+    });
+    return { ok: true, reason: null, balance: account.balance, granted: account.granted, refreshAt: account.refreshAt };
+  }
+  logger.warn('accounts', `probe ${account.email}: theos check_in_refused, chat failed: ${chat.reason ?? 'unknown'}`, {
+    accountId: account.id,
+    meta: { status: 403 },
+  });
+  return {
+    ok: false,
+    reason: 'check_in_refused',
+    balance: account.balance,
+    granted: account.granted,
+    refreshAt: account.refreshAt,
+  };
+}
+
+/**
  * SPEC §16.5 / §17.1: `/theos` drives status; an optional one-token chat proves the
  * session cookies work before the account is marked `active`.
  */
@@ -83,6 +112,9 @@ export async function probeAccount(
         status: response.status,
         bodyText: typeof response.body === 'string' ? response.body : JSON.stringify(response.body ?? ''),
       });
+      if (failure.code === 'upstream_check_in_refused') {
+        return await probeCheckInRefused(account, controller.signal);
+      }
       applyFailure(account, failure);
       logger.warn('accounts', `probe ${account.email} failed: ${failure.code}`, {
         accountId: account.id,

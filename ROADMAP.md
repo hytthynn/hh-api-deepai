@@ -1,10 +1,10 @@
 # ROADMAP
 
-Статус: **M0–M8 готовы** — 3 живых аккаунта, три протокола, стрим, слоты, рестарт, Claude Code 2.1.325 и Codex CLI 0.169.0 проверены на реальном апстриме; пул 20 аккаунтов, paid-баланс и Cline/Continue остаются ограничениями окружения (M8).
+Статус: **M0–M8 готовы** — 5 живых аккаунтов, три протокола, стрим, слоты, рестарт, Claude Code 2.1.325 и Codex CLI 0.169.0 проверены на реальном апстриме; пул 20 аккаунтов, paid-баланс и Cline/Continue остаются ограничениями окружения (M8).
 
 Легенда: `[ ]` не начато, `[x]` готово, `[~]` в работе, `[!]` заблокировано внешним условием.
 
-Проверки на 2026-11-14: `npm run typecheck`, `npm run lint`, `npm run test` (100/100, 13 файлов, 11.3 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
+Проверки на 2026-11-15: `npm run typecheck`, `npm run lint`, `npm run test` (104/104, 14 файлов, 13.1 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
 
 ---
 
@@ -147,6 +147,7 @@
 - [!] Cline/Continue live: IDE-плагины не установлены, обычный чат и стрим подтверждены HTTP smoke.
 - [!] Реальное переключение при недостатке Theos: блокировано B-022 — все аккаунты имеют `balance=0`; free запросы успешно обслуживаются, paid-модели дают `no_account_available` до попытки. Failover на upstream `insufficient` проверяется интеграционными моками.
 - [x] Обрыв клиента (B-025): живой прогон после фикса — `chat` и `messages` прерваны через `AbortController` после первого кадра; в `/api/requests` строки 113/114: `http_status=200`, `error_code=NULL`, `detail="client disconnected mid-stream"`, слоты возвращены, в логах `info client disconnected mid-stream`.
+- [x] B-026: `403 check_in_refused` от `/theos` больше не считается ошибкой авторизации — `classifyFailure` отдаёт временный `upstream_check_in_refused` (cooldown 2 мин, без `fail_count`), probe проверяет такой аккаунт чатом и возвращает `active`; аккаунты 1–3, ложно помеченные `dead`, восстановлены, пул 5/5 `active`
 - [x] Чистка репозитория: удалены `legacy/`, `bank.jsonl`, `accounts.txt`, `bank.example.jsonl`, `engine/{wave,redeem,probe}.py`, `__pycache__`, `shim*.log`; `.gitignore`, `eslint.config.mjs`, README и SPEC приведены в соответствие (ADR-020)
 - [x] Сохранность при рестарте: два production restart, все аккаунты (сейчас 5), jobs 4–15 и логи остались в SQLite; API-ключи хранятся хешами, отозванный ключ немедленно даёт 401.
 - [x] Smoke API-ключи (4–20) отозваны; живых ключей 0; реальные credentials/account cookies не печатались в smoke-вывод.
@@ -161,4 +162,4 @@
 
 ## Открытые вопросы
 
-Нет. Все развилки закрыты в `docs/DECISIONS.md` (ADR-001…ADR-020); найденные баги и ограничения провайдера — в `docs/BUGS.md` (B-001…B-025).
+Нет. Все развилки закрыты в `docs/DECISIONS.md` (ADR-001…ADR-020); найденные баги и ограничения провайдера — в `docs/BUGS.md` (B-001…B-026).
