@@ -54,7 +54,7 @@
 - [x] `POST/PATCH/DELETE /api/accounts`, `POST /api/accounts/:id/check`, `POST /api/accounts/check-all`
 - [x] Cron баланса (5 мин) + `balance_samples`
 - [x] UI: таблица аккаунтов, фильтры, бейджи, действия, таймер кулдауна
-- [x] Импорт легаси `bank.jsonl` — идемпотентный скрипт
+- [x] Импорт легаси `bank.jsonl` не нужен: источник истины — SQLite, легаси-контур удалён (ADR-020)
 - [x] Живая регистрация: аккаунт `AmieNolan3j7hm@ecolu.us` зарегистрирован через Chromium из Playwright (job 4), probe `ok`, `balance=0` (free-модели доступны)
 
 **Приёмка:** пройдена. Добавление/проверка/удаление аккаунта — на моке апстрима; покупка, регистрация и probe — на живом BM и живом DeepAI (3 логина, 3 аккаунта).
@@ -147,9 +147,10 @@
 - [!] Cline/Continue live: IDE-плагины не установлены, обычный чат и стрим подтверждены HTTP smoke.
 - [!] Реальное переключение при недостатке Theos: блокировано B-022 — все аккаунты имеют `balance=0`; free запросы успешно обслуживаются, paid-модели дают `no_account_available` до попытки. Failover на upstream `insufficient` проверяется интеграционными моками.
 - [x] Обрыв клиента (B-025): живой прогон после фикса — `chat` и `messages` прерваны через `AbortController` после первого кадра; в `/api/requests` строки 113/114: `http_status=200`, `error_code=NULL`, `detail="client disconnected mid-stream"`, слоты возвращены, в логах `info client disconnected mid-stream`.
+- [x] Чистка репозитория: удалены `legacy/`, `bank.jsonl`, `accounts.txt`, `bank.example.jsonl`, `engine/{wave,redeem,probe}.py`, `__pycache__`, `shim*.log`; `.gitignore`, `eslint.config.mjs`, README и SPEC приведены в соответствие (ADR-020)
 - [x] Сохранность при рестарте: два production restart, все аккаунты (сейчас 5), jobs 4–15 и логи остались в SQLite; API-ключи хранятся хешами, отозванный ключ немедленно даёт 401.
 - [x] Smoke API-ключи (4–20) отозваны; живых ключей 0; реальные credentials/account cookies не печатались в smoke-вывод.
-- [x] Аудит секретов: `git status` чист от `data/`, `prof/`, `.env*`, `bank.jsonl`, `accounts.txt`; ключи только хешем; логи редактируются
+- [x] Аудит секретов: `git status` чист от `data/`, `prof/`, `.env*`; ключи только хешем; логи редактируются
 - [x] Тег `v1.0.0` — принят владельцем запуск; пул вырос до 5 аккаунтов (jobs 12 и 14 по 1 логину), ограничения пула, Cline/Continue и реального upstream exhaustion перечислены выше.
 
 Маска `x-hh-account` по §16 (`a***@d***.us`) не различает адреса на одном домене с одной первой буквой (`C***@e***.us` у Clareta и Carree), поэтому принадлежность запроса проверяется по `requests.account_id`, а не по заголовку.
@@ -160,4 +161,4 @@
 
 ## Открытые вопросы
 
-Нет. Все развилки закрыты в `docs/DECISIONS.md` (ADR-001…ADR-019); найденные баги и ограничения провайдера — в `docs/BUGS.md` (B-001…B-025).
+Нет. Все развилки закрыты в `docs/DECISIONS.md` (ADR-001…ADR-020); найденные баги и ограничения провайдера — в `docs/BUGS.md` (B-001…B-025).

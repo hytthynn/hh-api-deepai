@@ -126,3 +126,10 @@
 **Решение.** Приёмочная проверка баланса и живого чата идёт через `POST /api/accounts/check-all` → job `probe` (тот же путь, что у cron раз в 5 минут): theos + короткий чат на free-модели, результат в `job_items` и `accounts`. `probe.py` остаётся ручной диагностикой легаси-банка и вебом не используется.
 **Альтернативы.** Дамп БД в `bank.jsonl` перед приёмкой (лишний код и риск утечки cookies); удалить пункт из §25.3 (теряется требование).
 **Следствия.** §25.3 ссылается на `check-all`; результаты видны в UI и `jobs`, а не только в консоли Python.
+
+## ADR-020. Легаси-контур удалён из репозитория
+
+**Контекст.** До hh-api существовал отдельный контур: HTTP-шим `legacy/shim.py` (порт 8770), читавший `bank.jsonl`, CLI `engine/wave.py`/`redeem.py`/`probe.py`, плюс `accounts.txt` и `bank.example.jsonl`. После переезда на SQLite (`HH_ENGINE_NO_BANK=1`, ADR-019) ни один файл в `app/`, `src/`, `scripts/`, `tests/` на этот контур не ссылался: шим не запущен, `bank.jsonl` не читается и не пишется, импорт в БД отсутствует. При этом `bank.jsonl` и `accounts.txt` хранили пароли и cookies в открытом виде.
+**Решение.** Удалены `legacy/`, `bank.jsonl`, `accounts.txt`, `bank.example.jsonl`, `engine/{wave,redeem,probe}.py`, `__pycache__`, `shim*.log`, `tsconfig.tsbuildinfo`. Из `.gitignore` убраны правила мёртвых файлов (`bank.jsonl`, `accounts.txt`, `.shim.pid`, `tmp_*.json`, `*.out`, `.wave.lock`), из `eslint.config.mjs` — игнор `legacy/**`, из README/SPEC — упоминания каталога. Остались только `engine/{worker,oauth,dpcode}.py` + `requirements.txt`.
+**Альтернативы.** Оставить каталог «справочно» (лишние секреты на диске и ложное впечатление, что шим поддерживается); оставить `bank.example.jsonl` как формат (формат нигде не парсится).
+**Следствия.** Единственные источники истины — `data/hh.db` и `prof/`; `HH_ENGINE_NO_BANK=1` остаётся страховкой в `engine/dpcode.py`. Удаление обратимо через историю git (`git show 978e9a4:legacy/shim.py`).

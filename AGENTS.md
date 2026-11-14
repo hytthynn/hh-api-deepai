@@ -83,7 +83,7 @@ engine/       Python: worker.py + отлаженные oauth/dpcode.
 
 - Коммит = одна логическая единица. Формат: `<scope>: <imperative>` (`gateway: add anthropic streaming`, `ui: accounts table`).
 - В коммит входят изменения кода + соответствующие `docs/*.md` / `ROADMAP.md`.
-- Запрещено коммитить: `data/`, `prof/`, `.env.local`, `bank.jsonl`, `accounts.txt`, `node_modules/`, `.next/`.
+- Запрещено коммитить: `data/`, `prof/`, `.env.local`, `node_modules/`, `.next/`.
 - Перед коммитом: `git status --short` — глазами проверить, что нет секретов.
 
 ## Definition of Done

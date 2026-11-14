@@ -110,7 +110,7 @@
    engine/worker.py  ── playwright ── Chrome   api.deepai.org / bulkmail.shop
 ```
 
-Один процесс Node. Воркеры регистрации — дочерние Python-процессы. Состояние — только в SQLite; `bank.jsonl` больше не источник истины (используется лишь для импорта легаси-данных).
+Один процесс Node. Воркеры регистрации — дочерние Python-процессы. Состояние — только в SQLite; легаси-файлов (`bank.jsonl`, `accounts.txt`, `legacy/`) в проекте нет (ADR-020).
 
 ### 5.2 Почему Python-воркер
 
@@ -221,14 +221,11 @@ Cache Components из Next 16.4 **не включаем**: все страниц
 │  ├─ worker.py                   # NDJSON-протокол
 │  ├─ dpcode.py                   # machine-id, lane-заголовки, сессия, theos, models
 │  ├─ oauth.py                    # один аккаунт: OAuth → cookies
-│  ├─ probe.py                    # CLI-диагностика (не используется вебом)
-│  ├─ redeem.py                   # CLI-покупка (легаси, веб покупает в TS)
-│  ├─ wave.py                     # CLI-волна (легаси)
 │  └─ requirements.txt
 ├─ drizzle/                       # сгенерированные SQL-миграции
 ├─ data/hh.db                     # runtime, gitignored
 ├─ docs/{SPEC.md,DESIGN.md,BUGS.md,DECISIONS.md}
-├─ scripts/{doctor.mjs,start.ps1}
+├─ scripts/doctor.mjs
 ├─ tests/{unit,integration,fixtures}
 ├─ AGENTS.md
 ├─ ROADMAP.md
@@ -860,7 +857,7 @@ Handshake при старте:
 
 - `id` уникален в рамках процесса; ответы на чужие id игнорируются.
 - Таймаут операции на стороне Node (`timeout_ms` + 10 с) → `SIGTERM`, через 5 с `taskkill /T /F` (Windows) / `kill -9`.
-- Воркер не пишет `bank.jsonl` при `HH_ENGINE_NO_BANK=1`; cookies возвращаются только в результате.
+- Воркер не пишет на диск (`HH_ENGINE_NO_BANK=1`); cookies возвращаются только в результате.
 - Секреты не попадают в stderr; допускаются только коды стадий и URL без query.
 - Смена поведения `oauth.one()` запрещена без обновления этого контракта и `docs/BUGS.md`.
 
@@ -1078,7 +1075,7 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 - [x] `npm run test` — все сценарии §25.1–25.2 зелёные: 100 тестов, 13 файлов.
 - [x] `npm run doctor` — все пункты `ok` (при остановленном сервере; при запущенном порт 3210 законно занят).
 - [x] Реальная закупка 1 логина и регистрация 1 аккаунта: статус `active`; баланс `0` Theos вместо 65 — ограничение провайдера B-022.
-- [x] Реальная проверка баланса: `POST /api/accounts/check-all` → job `probe` (10 и 11), все `ok`; после докупки аккаунтов 4–5 cron `balance sync: 5/5 ok`, цифры совпадают с `/api/accounts` (ADR-019; `probe.py --all` читает только легаси `bank.jsonl`).
+- [x] Реальная проверка баланса: `POST /api/accounts/check-all` → job `probe` (10 и 11), все `ok`; после докупки аккаунтов 4–5 cron `balance sync: 5/5 ok`, цифры совпадают с `/api/accounts` (ADR-019).
 - [x] Claude Code 2.1.325: `claude -p "hi" --model glm-5.3-flash --output-format text` через `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` → exit 0, ответ; `/api/requests` — `endpoint=messages`, 200, stream. Первоначально live-прогон выявил B-024 (`messages[].role=system`), после фикса повторный прогон прошёл.
 - [x] Codex CLI 0.169.0: `codex exec --skip-git-repo-check hi` с `CODEX_HOME/config.toml` (`wire_api="responses"`, `base_url=http://127.0.0.1:3210/v1`) → exit 0, ответ; `/api/requests` — `endpoint=responses`, 200, stream.
 - [!] Cline/Continue: обычный чат и стрим → ответ. Заблокировано: расширения не установлены; чат и стрим проверены curl-эквивалентом.
@@ -1087,7 +1084,7 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 - [x] Отзыв ключа немедленно даёт 401: живой запрос отозванным `hh-api-…` → 401 `invalid_api_key`.
 - [x] Обрыв клиента на стриме (B-025): после фикса `chat` и `messages`, прерванные `AbortController` после первого кадра, дают по одной строке в `requests` с `http_status=200`, `error_code=NULL`, `detail="client disconnected mid-stream"`; `stream_error`/502 остаётся только для разрыва апстрима (тест 6).
 - [!] Пул 20 аккаунтов и сценарий §25.2.12 (20 стримов на 4 аккаунтах): на момент приёмки 5 аккаунтов из 20; прогон на доступном пуле — 50 запросов с шагом 150 мс, 43×200 / 7×429 по штатному ожиданию слота (M8).
-- [x] В `git status` нет `data/`, `prof/`, `.env.local`, `bank.jsonl`.
+- [x] В `git status` нет `data/`, `prof/`, `.env.local`.
 
 ---
 

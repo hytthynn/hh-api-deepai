@@ -112,7 +112,6 @@ src/jobs/       provision, probe, models-sync, cron
 src/server/     склейка: runtime, слоты, шлюз, admin-guard
 src/ui/         компоненты, хуки, SVG-графики
 engine/         Python: worker.py + oauth/dpcode
-legacy/         старый HTTP-шлюз (справочно, не используется)
 ```
 
 ## Если что-то не работает
@@ -131,7 +130,7 @@ legacy/         старый HTTP-шлюз (справочно, не испол�
 - Секреты только в `.env.local` и в зашифрованных `settings` (AES-256-GCM, scrypt); в git, логи и ответы не попадают.
 - Cookies аккаунтов и пароли BM шифруются тем же ключом; в UI и экспорте — только маски.
 - Панель закрыта паролем и httpOnly-cookie, мутации проверяют Origin; CSP с nonce.
-- `data/`, `prof/`, `.env*`, `bank.jsonl`, `accounts.txt` — в `.gitignore`.
+- `data/`, `prof/`, `.env*` — в `.gitignore`.
 
 ## Правовая рамка
 
