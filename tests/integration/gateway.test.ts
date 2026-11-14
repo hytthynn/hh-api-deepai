@@ -380,6 +380,41 @@ describe('SPEC §25.2 integration: streaming', () => {
     }
     expect(released).toBe(true);
     expect(slots.size()).toBe(0);
+
+    // B-025: the client going away is recorded as a 200 stream, not a 502 gateway error.
+    expect(await waitFor(() => queryRequests({ per: 1 }).rows.length === 1)).toBe(true);
+    const row = queryRequests({ per: 1 }).rows[0]!;
+    expect(row.httpStatus).toBe(200);
+    expect(row.errorCode).toBeNull();
+    expect(row.detail).toContain('client');
+  });
+
+  it('9b. a client abort on /v1/messages still persists the stream row (B-025)', async () => {
+    seedAccount('abort-messages@example.test', { lastUsedAt: 1_000 });
+    upstreamMock.plan('abort-messages@example.test', ['stream_slow']);
+    const key = seedKey();
+    const controller = new AbortController();
+
+    const response = await post(
+      '/v1/messages',
+      key,
+      { model: FREE_MODEL, max_tokens: 64, messages: [{ role: 'user', content: 'ping' }], stream: true },
+      controller.signal,
+    );
+    expect(response.status).toBe(200);
+
+    const reader = response.body!.getReader();
+    await reader.read();
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+
+    expect(await waitFor(() => queryRequests({ per: 1 }).rows.length === 1)).toBe(true);
+    const row = queryRequests({ per: 1 }).rows[0]!;
+    expect(row.endpoint).toBe('messages');
+    expect(row.httpStatus).toBe(200);
+    expect(row.errorCode).toBeNull();
+    expect(row.detail).toContain('client');
+    expect(await waitFor(() => slots.busyIds().size === 0)).toBe(true);
   });
 });
 

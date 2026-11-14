@@ -70,26 +70,54 @@ export async function handleAnthropicMessages(request: Request): Promise<Respons
     });
 
     if (run.kind === 'stream') {
+      let recorded = false;
+      const recordStream = (error?: unknown, usage?: { inputTokens: number; outputTokens: number }): void => {
+        if (recorded) return;
+        recorded = true;
+        const clientClosed = request.signal.aborted;
+        const failed = error !== undefined && !clientClosed;
+        recordRequest(ctx, {
+          model: body.model,
+          stream: true,
+          accountId: run.account.id,
+          attempts: run.attempts,
+          httpStatus: failed ? 502 : 200,
+          latencyMs: Date.now() - ctx.startedAt,
+          firstByteMs: run.firstByteAt - ctx.startedAt,
+          inputTokens: usage?.inputTokens ?? 0,
+          outputTokens: usage?.outputTokens ?? 0,
+          errorCode: failed ? 'stream_error' : null,
+          detail: clientClosed
+            ? 'client disconnected mid-stream'
+            : failed
+              ? (error instanceof Error ? error.message : String(error)).slice(0, 500)
+              : detail,
+        });
+        if (failed) {
+          logger.warn('gateway', `messages stream broke: ${error instanceof Error ? error.message : String(error)}`, {
+            accountId: run.account.id,
+            requestId: ctx.requestId,
+          });
+        }
+      };
       const stream = streamFromGenerator(
         anthropicStreamFrames(
           run.upstream.body,
           { model: body.model, inputTokensEstimate: estimate, stopSequences: body.stop },
           (result) => {
-            recordRequest(ctx, {
-              model: body.model,
-              stream: true,
-              accountId: run.account.id,
-              attempts: run.attempts,
-              httpStatus: 200,
-              latencyMs: Date.now() - ctx.startedAt,
-              firstByteMs: run.firstByteAt - ctx.startedAt,
-              inputTokens: result.usage.inputTokens,
-              outputTokens: result.usage.outputTokens,
-              detail,
-            });
+            recordStream(undefined, result.usage);
           },
         ),
-        { onError: (error) => streamErrorFrame('messages', error), onClose: run.release },
+        {
+          onError: (error) => {
+            recordStream(error);
+            return request.signal.aborted ? null : streamErrorFrame('messages', error);
+          },
+          onClose: () => {
+            run.release();
+            recordStream();
+          },
+        },
       );
       return sseResponse(stream, {
         requestId: ctx.requestId,

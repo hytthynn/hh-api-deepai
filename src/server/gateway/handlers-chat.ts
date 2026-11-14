@@ -64,6 +64,7 @@ function chatPassthrough(
     attempts: number;
     firstByteMs: number;
   },
+  signal: AbortSignal,
   onAbort: () => void,
   release: () => void,
 ): ReadableStream<Uint8Array> {
@@ -73,26 +74,37 @@ function chatPassthrough(
   let sawDone = false;
   let closed = false;
 
-  const finish = (error?: unknown): void => {
+  const finish = (error?: unknown, clientClosed = false): void => {
     if (closed) return;
     closed = true;
     release();
     const usage = extractUsage(tail);
+    const failed = error !== undefined && !clientClosed;
     recordRequest(ctx, {
       model: meta.model,
       stream: true,
       accountId: meta.accountId,
       attempts: meta.attempts,
-      httpStatus: error ? 502 : 200,
+      httpStatus: failed ? 502 : 200,
       latencyMs: Date.now() - ctx.startedAt,
       firstByteMs: meta.firstByteMs,
       inputTokens: usage?.input ?? 0,
       outputTokens: usage?.output ?? 0,
-      errorCode: error ? 'stream_error' : null,
-      detail: error ? (error instanceof Error ? error.message : String(error)).slice(0, 500) : null,
+      errorCode: failed ? 'stream_error' : null,
+      detail: clientClosed
+        ? 'client disconnected mid-stream'
+        : failed
+          ? (error instanceof Error ? error.message : String(error)).slice(0, 500)
+          : null,
     });
-    if (error) {
+    if (failed) {
       logger.warn('gateway', `chat stream broke: ${error instanceof Error ? error.message : String(error)}`, {
+        accountId: meta.accountId,
+        requestId: ctx.requestId,
+      });
+    } else if (clientClosed) {
+      // B-025: the client going away is not a gateway failure.
+      logger.info('gateway', 'client disconnected mid-stream', {
         accountId: meta.accountId,
         requestId: ctx.requestId,
       });
@@ -116,20 +128,33 @@ function chatPassthrough(
         if (text.includes('[DONE]')) sawDone = true;
         controller.enqueue(value);
       } catch (error) {
+        if (signal.aborted) {
+          finish(undefined, true);
+          try {
+            controller.close();
+          } catch {
+            // the consumer is already gone
+          }
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
-        controller.enqueue(
-          new TextEncoder().encode(
-            `data: ${JSON.stringify({ error: { message, type: 'server_error', code: 'stream_error' } })}\n\n`,
-          ),
-        );
+        try {
+          controller.enqueue(
+            new TextEncoder().encode(
+              `data: ${JSON.stringify({ error: { message, type: 'server_error', code: 'stream_error' } })}\n\n`,
+            ),
+          );
+          controller.close();
+        } catch {
+          // the consumer is already gone
+        }
         finish(error);
-        controller.close();
       }
     },
     cancel() {
       onAbort();
       void reader.cancel().catch(() => undefined);
-      finish();
+      finish(undefined, true);
     },
   });
 }
@@ -183,6 +208,7 @@ export async function handleChat(request: Request): Promise<Response> {
           attempts: run.attempts,
           firstByteMs: run.firstByteAt - ctx.startedAt,
         },
+        request.signal,
         () => run.upstream.controller.abort(),
         run.release,
       );

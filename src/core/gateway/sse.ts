@@ -96,7 +96,13 @@ export function streamFromGenerator(
         for await (const frame of generator) controller.enqueue(encoder.encode(frame));
       } catch (error) {
         const frame = options.onError?.(error);
-        if (frame) controller.enqueue(encoder.encode(frame));
+        if (frame) {
+          try {
+            controller.enqueue(encoder.encode(frame));
+          } catch {
+            // the client is already gone; the error frame has nowhere to go
+          }
+        }
       } finally {
         try {
           controller.close();
