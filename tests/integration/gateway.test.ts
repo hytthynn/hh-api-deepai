@@ -10,6 +10,7 @@ import { runMigrations } from '@/src/adapters/db/migrate';
 import { createAccount, getAccount, updateAccount } from '@/src/adapters/db/repositories/accounts';
 import { createKey, revokeKey } from '@/src/adapters/db/repositories/keys';
 import { setModelEnabled } from '@/src/adapters/db/repositories/models';
+import { queryRequests } from '@/src/adapters/db/repositories/requests';
 import { serializeCookies } from '@/src/adapters/upstream/cookies';
 import { encrypt, generateApiKey, hashApiKey } from '@/src/lib/crypto';
 import { maskEmail } from '@/src/lib/ids';
@@ -283,6 +284,28 @@ describe('SPEC §25.2 integration: streaming', () => {
     };
     expect(stop.delta).toEqual({ stop_reason: 'end_turn', stop_sequence: null });
     expect(stop.usage.output_tokens).toBe(3);
+    expect(slots.busyIds().size).toBe(0);
+  });
+
+  it('streams persist first_byte_ms (B-021): queue wait shows up as latency − first byte', async () => {
+    seedAccount('firstbyte@example.test', { lastUsedAt: 1_000 });
+    upstreamMock.setDefaultMode('stream');
+    const key = seedKey();
+
+    const response = await post('/v1/chat/completions', key, {
+      model: FREE_MODEL,
+      messages: [{ role: 'user', content: 'ping' }],
+      stream: true,
+    });
+    expect(response.status).toBe(200);
+    await response.text();
+
+    const row = queryRequests({ per: 1 }).rows[0];
+    expect(row?.stream).toBe(1);
+    expect(row?.httpStatus).toBe(200);
+    expect(row?.firstByteMs).not.toBeNull();
+    expect(row?.firstByteMs ?? -1).toBeGreaterThanOrEqual(0);
+    expect(row?.firstByteMs ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(row?.latencyMs ?? 0);
     expect(slots.busyIds().size).toBe(0);
   });
 

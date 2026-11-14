@@ -57,7 +57,13 @@ function extractUsage(text: string): { input: number; output: number } | null {
 function chatPassthrough(
   source: ReadableStream<Uint8Array>,
   ctx: GatewayContext,
-  meta: { model: string; accountId: number; accountEmail: string; attempts: number },
+  meta: {
+    model: string;
+    accountId: number;
+    accountEmail: string;
+    attempts: number;
+    firstByteMs: number;
+  },
   onAbort: () => void,
   release: () => void,
 ): ReadableStream<Uint8Array> {
@@ -79,6 +85,7 @@ function chatPassthrough(
       attempts: meta.attempts,
       httpStatus: error ? 502 : 200,
       latencyMs: Date.now() - ctx.startedAt,
+      firstByteMs: meta.firstByteMs,
       inputTokens: usage?.input ?? 0,
       outputTokens: usage?.output ?? 0,
       errorCode: error ? 'stream_error' : null,
@@ -174,6 +181,7 @@ export async function handleChat(request: Request): Promise<Response> {
           accountId: run.account.id,
           accountEmail: run.account.email,
           attempts: run.attempts,
+          firstByteMs: run.firstByteAt - ctx.startedAt,
         },
         () => run.upstream.controller.abort(),
         run.release,

@@ -110,6 +110,7 @@ export async function handleResponses(request: Request): Promise<Response> {
               attempts: run.attempts,
               httpStatus: 200,
               latencyMs: Date.now() - ctx.startedAt,
+              firstByteMs: run.firstByteAt - ctx.startedAt,
               inputTokens: result.usage.inputTokens,
               outputTokens: result.usage.outputTokens,
             });

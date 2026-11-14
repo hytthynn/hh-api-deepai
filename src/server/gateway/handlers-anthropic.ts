@@ -82,6 +82,7 @@ export async function handleAnthropicMessages(request: Request): Promise<Respons
               attempts: run.attempts,
               httpStatus: 200,
               latencyMs: Date.now() - ctx.startedAt,
+              firstByteMs: run.firstByteAt - ctx.startedAt,
               inputTokens: result.usage.inputTokens,
               outputTokens: result.usage.outputTokens,
               detail,
