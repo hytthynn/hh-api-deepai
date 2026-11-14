@@ -13,7 +13,8 @@ import requests
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(ENGINE_DIR)          # данные (bank.jsonl, accounts.txt, prof/) живут в корне репо
 BANK = os.path.join(ROOT, "bank.jsonl")
 API = "https://api.deepai.org"
 OAUTH_START = API + "/accounts/google/login/?process=login"
@@ -87,6 +88,9 @@ def read_bank(path=BANK):
 
 
 def append_bank(rec, path=BANK):
+    """HH_ENGINE_NO_BANK=1: веб-воркер не пишет bank.jsonl, результат уходит в stdout."""
+    if os.environ.get("HH_ENGINE_NO_BANK") == "1":
+        return
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 

@@ -14,9 +14,10 @@
 - [x] `docs/BUGS.md` — ограничения провайдера B-001…B-012
 - [x] `AGENTS.md` — правила работы (< 200 строк)
 - [x] `ROADMAP.md`
-- [ ] `.env.example`, `.gitignore`, перенос Python в `engine/` — выполняется в M1
+- [x] `.env.example`, `.gitignore` (node, next, data, prof, .env.local)
+- [x] Перенос Python в `engine/`, легаси-шлюз в `legacy/`, `HH_ENGINE_NO_BANK`
 
-Коммит: `docs: spec, design, decisions, roadmap`.
+Коммит: `docs: spec, design, decisions, roadmap` + `engine: move python pipeline`.
 
 ---
 
