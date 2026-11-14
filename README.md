@@ -1,127 +1,136 @@
-# DeepAI Code — автогенерация бесплатных аккаунтов + OpenAI-совместимый шлюз
+# hh-api
 
-> **Актуальный проект — `hh-api`** (Next.js + Python-воркер). ТЗ: [`docs/SPEC.md`](docs/SPEC.md),
-> план: [`ROADMAP.md`](ROADMAP.md), правила: [`AGENTS.md`](AGENTS.md).
-> Скрипты переехали в `engine/`, старый HTTP-шлюз — в `legacy/`. Ниже — исходная документация
-> пайплайна, она описывает поведение провайдера и остаётся справочником.
+Локальный шлюз к DeepAI Code: покупает Google-логины в BM, регистрирует аккаунты через Python + Playwright, отдаёт локальные ключи `hh-api-…` в трёх протоколах (OpenAI Chat, OpenAI Responses, Anthropic Messages), ротирует аккаунты при исчерпании лимита и показывает модели, логи и статистику.
 
-Бесплатный доступ к **Claude Opus 5.5, GPT-6.1 Sol, Gemini 4 Argon, Fable 5.2, Kimi K3** и ещё 11 моделям без карты, без API-ключа и без десктоп-приложения.
+Требования и контракты — [`docs/SPEC.md`](docs/SPEC.md), дизайн — [`docs/DESIGN.md`](docs/DESIGN.md), решения — [`docs/DECISIONS.md`](docs/DECISIONS.md), ограничения провайдера — [`docs/BUGS.md`](docs/BUGS.md), план — [`ROADMAP.md`](ROADMAP.md).
 
-Один аккаунт = **65 Theos** (обновляются каждые 24 часа) + **11 моделей без расхода Theos вообще**.
+## Что нужно
 
-## Как это работает
-
-```
-24h Google-логин  →  Google OAuth  →  DeepAI аккаунт  →  cookies  →  /deepai_code/chat/completions
-   (покупка)          api.deepai.org      (создаётся сам)            (OpenAI-формат)
-```
-
-Три гейта, которые надо пройти:
-
-| Гейт | Что нужно | Почему |
+| Компонент | Обязательно | Зачем |
 |---|---|---|
-| `lane_version_unsupported` (426) | `X-DeepAI-Code-Theos: 4` | без него любой запрос отбивается |
-| `social_login_required` (403) | OAuth через Google/Apple | email-аккаунты DeepAI не пускают в Code |
-| `machine_required` (403) | `X-DeepAI-Code-Machine: sha256(MachineGuid)` | привязка к «машине», иначе не выдают free Theos |
+| Node.js >= 20.9 | да | приложение |
+| Python 3.11+ | для регистрации | `engine/worker.py` |
+| Playwright для Python | для регистрации | браузерная автоматизация |
+| Chrome (или `playwright install chrome`) | для регистрации | OAuth-волна |
+| Ключ BM (bulkmail.shop) | для покупки логинов | пополнение аккаунтов |
 
-**Критично: стартовать OAuth с `api.deepai.org`, а не с `deepai.org`.** На `deepai.org` allauth ломается (`Social Network Login Failure, Code: unknown`) — это не бан и не IP, это неверный контур:
+Шлюз и панель работают и без Python/Chrome: купленные или вручную добавленные аккаунты обслуживаются, недоступна только автопокупка с регистрацией.
 
-```js
-// deepai.org/static/.../main.js
-network_to_url = {google: "/accounts/google/login/?process=login"};
-app_base_url   = "https://api.deepai.org";
+## Установка
+
+```powershell
+npm install
+Copy-Item .env.example .env.local
+# вписать HH_SECRET (32+ байта base64) и пароль панели
+npm run doctor          # проверка окружения: node, python, playwright, chrome, data/, секрет, порт
+npm run db:migrate      # создаёт data/hh.db и сид каталога моделей
+npm run dev             # http://127.0.0.1:3210
 ```
 
-## Быстрый старт
+Прод-режим: `npm run build`, затем `npm start`. Порт и хост фиксированы в `package.json` (`-H 127.0.0.1 -p 3210`); наружу не выставляется, `HH_ALLOW_REMOTE=1` нужен только для осознанного исключения.
+
+Для регистрации один раз:
+
+```powershell
+pip install playwright
+python -m playwright install chrome
+```
+
+`GET /api/engine` (или индикатор в сайдбаре) показывает `chrome_ok`. Пока `false`, кнопка «Добавить аккаунты» заблокирована с пояснением.
+
+## Первый запуск
+
+1. Открыть `http://127.0.0.1:3210` → редирект на `/login`, ввести `HH_ADMIN_PASSWORD`.
+2. **Настройки → BM**: вставить API-ключ BM, нажать «Проверить». Ключ хранится только в зашифрованном виде; легаси `BM_KEY` из `.env` импортируется один раз (ADR-011).
+3. **Настройки → Движок**: воркеры, headless, прокси. Смена применяется без рестарта.
+4. **Аккаунты → Добавить аккаунты**: количество логинов, оценка стоимости, подтверждение. Джоба показывает прогресс по каждому item.
+5. **Ключи → Создать ключ**: ключ `hh-api-…` показывается один раз, в БД лежит только `sha256(pepper||key)`.
+6. Вставить сниппет из карточки ключа в IDE или SDK.
+
+## Подключение клиентов
+
+Базовый URL — `http://127.0.0.1:3210`, ключ — `hh-api-…`.
 
 ```bash
-# 1. Google-логины (24h). Либо свои email|password в accounts.txt, либо покупка:
-python redeem.py --buy 5                 # bulkmail.shop лот #578 ($0.0166/шт)
-python redeem.py --file codes.txt        # готовые строки email|password
+# OpenAI Chat Completions
+curl -s http://127.0.0.1:3210/v1/chat/completions \
+  -H 'Authorization: Bearer hh-api-...' -H 'Content-Type: application/json' \
+  -d '{"model":"glm-5.3-flash","messages":[{"role":"user","content":"say ok"}]}'
 
-# 2. Волна OAuth (Chrome, headful предпочтительнее)
-python wave.py --limit 20 --workers 2
+# OpenAI Responses
+curl -s http://127.0.0.1:3210/v1/responses \
+  -H 'Authorization: Bearer hh-api-...' -H 'Content-Type: application/json' \
+  -d '{"model":"glm-5.3-flash","input":"say ok"}'
 
-# 3. Проверка + распределение по моделям
-python probe.py --all
-
-# 4. Шлюз
-python shim.py --port 8770 --bank bank.jsonl
-curl localhost:8770/v1/models
+# Anthropic Messages
+curl -s http://127.0.0.1:3210/v1/messages \
+  -H 'x-api-key: hh-api-...' -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' \
+  -d '{"model":"glm-5.3-flash","max_tokens":32,"messages":[{"role":"user","content":"say ok"}]}'
 ```
 
-## API шлюза
+| Клиент | Переменные |
+|---|---|
+| Claude Code | `ANTHROPIC_BASE_URL=http://127.0.0.1:3210`, `ANTHROPIC_API_KEY=hh-api-...` |
+| Codex CLI / OpenAI SDK | `OPENAI_BASE_URL=http://127.0.0.1:3210/v1`, `OPENAI_API_KEY=hh-api-...` |
+| Cline / Continue | base URL `http://127.0.0.1:3210/v1`, ключ `hh-api-...` |
 
-Полностью OpenAI-совместимый:
+Список моделей: `GET /v1/models` (27 моделей: 11 free, 16 paid). Free не расходуют Theos, paid требуют `balance > 0`. Модель по умолчанию — `glm-5.3-flash`.
 
-```bash
-curl -X POST localhost:8770/v1/chat/completions \
-  -H 'Content-Type: application/json' -d '{
-    "model": "claude-opus-5-5",
-    "messages": [{"role":"user","content":"say ok"}],
-    "max_tokens": 64
-  }'
+Стриминг: `stream: true` во всех трёх протоколах. Ответы Chat идут байт-прозрачно с завершающим `data: [DONE]`; Responses и Messages рендерятся из чанков с точным порядком событий (§13, §14).
+
+## Поведение при ошибках
+
+- `429`/исчерпание Theos — аккаунт уходит в кулдаун, запрос повторяется на следующем; клиент получает `200` и заголовок `x-hh-attempts`.
+- `403 machine_required` — ротация machine-id (максимум 2 попытки), аккаунт не меняется.
+- `401/403 social_login_required` — аккаунт помечается `dead` после 3 неудач.
+- Нет доступных аккаунтов — `429 no_account_available` в форме запрошенного протокола.
+- Ответ уже начал стримиться — failover не выполняется, клиент получает `error`-событие.
+
+## Команды
+
+```powershell
+npm run dev          # разработка, http://127.0.0.1:3210
+npm run build        # прод-сборка
+npm start            # прод-запуск
+npm run typecheck    # tsc --noEmit
+npm run lint         # eslint
+npm run test         # vitest: юнит + интеграционные сценарии §25.2
+npm run db:generate  # миграция из src/adapters/db/schema.ts
+npm run db:migrate   # применить миграции
+npm run doctor       # проверка окружения
 ```
-
-- авторизация не требуется (или `Bearer any`, если так удобнее клиенту);
-- `stream: true` поддержан (SSE passthrough);
-- имена моделей — как в `/v1/models` (см. таблицу ниже);
-- шлюз сам ротирует аккаунты при `401/403/429`, ставит lane/machine/beacon-заголовки.
-
-## Модели (проверено на живом аккаунте)
-
-**Без расхода Theos — неограниченно (11):**
-`glm-5.3-flash`, `deepseek-v4.1-flash`, `mimo-2.6-flash`, `qwen-3.8-flash`,
-`minimax-m3.1-flash`, `muse-ember`, `solar-mini-4`, `gpt-6-luna`, `mimo-2.6-pro`,
-`glyph-cluster`, `deepai-cyber`
-
-**Платные Theos — но Theos бесплатные, 65/сутки (16):**
-`claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2`, `gpt-6.1-sol`, `gpt-6.1-terra`,
-`gpt-6-astra`, `gemini-4-argon`, `gemini-4-hydrogen`, `gemini-4-carbon`, `glm-5.3`,
-`kimi-k3`, `kimi-k3.1-pro`, `minimax-m3`, `muse-spark-1.3`, `muse-wonder`, `qwen-3.8-max-prime`
-
-Замер: 11 коротких запросов (opus/sonnet/sol/argon/fable/k3/...) списали **0.70 Theos**.
-То есть 65 Theos ≈ 100–300 коротких ответов или ~4–6 длинных задач на Opus 5.5.
-
-Контекст у frontier-моделей: 1 000 000 токенов, `max_tokens` до 128k (у Claude — 64k).
-Vision: `input: ["text","image"]` у всех, кроме `solar-mini-4` / `glyph-cluster` / `deepai-cyber`.
-
-## Экономика
-
-- лот 24h-Google-логин: **$0.0166** → аккаунт с 65 Theos/сутки + безлимитный flash-пул;
-- выход OAuth-волны: **~44/50** (88%) на свежих логинах, IAP вылезает редко (аккаунты уже прогреты вендором);
-- скорость: 20–26 с на аккаунт последовательно, 4 аккаунта/мин на 2 воркерах;
-- Theos обновляются каждый день в то же время (`refresh_at`), аккаунт живёт, пока жив Google-логин
-  (24 часа) — но **выданный доступ переживает протухание логина**: работаем по cookies, пароль больше не нужен.
-
-Практический вывод: 20 аккаунтов ≈ $0.33 и ≈ 1300 Theos/сутки + 20 параллельных безлимитных пулов.
 
 ## Структура
 
 ```
-redeem.py     покупка/разбор Google-логинов  -> accounts.txt
-oauth.py      один аккаунт: OAuth + cookies   -> bank.jsonl
-wave.py       волна с резюмом по bank.jsonl
-probe.py      проверка theos/чата, замер расхода
-shim.py       OpenAI-совместимый HTTP-шлюз (stdlib, без зависимостей кроме requests)
-bank.jsonl    cookies + machine-id на аккаунт
+app/            HTTP: страницы, /api/*, /v1/*, /healthz
+src/core/       домен: сущности, порты, normalize/render, failover, выбор аккаунта
+src/adapters/   БД, DeepAI, BM, Python-воркер
+src/jobs/       provision, probe, models-sync, cron
+src/server/     склейка: runtime, слоты, шлюз, admin-guard
+src/ui/         компоненты, хуки, SVG-графики
+engine/         Python: worker.py + oauth/dpcode
+legacy/         старый HTTP-шлюз (справочно, не используется)
 ```
 
-## Питфолы (стоили прогонов)
+## Если что-то не работает
 
-- **26 с на аккаунт, но Chrome умирает после ~14 подряд** — перезапускать контекст каждые 10 аккаунтов,
-  профиль на аккаунт (`prof/<local-part>`), `--disable-dev-shm-usage --disable-gpu`.
-- **sppedbump `workspacetermsofservice`** («добро пожаловать в ваш новый аккаунт») — обязательно жать
-  «Понятно», иначе цикл стоит; затем обычный consent «Continue».
-- **Не переиспользовать `state`**: каждый логин идёт со свежим стартом на `api.deepai.org`, повторный
-  callback с тем же code даёт `Social Network Login Failure`.
-- **Пул 24h-логинов протухает за сутки**: пачка, отредемленная вчера, даёт `signin/rejected` или
-  `challenge/recaptcha`. Коды проверять перед покупкой, OAuth гнать в том же окне.
-- **reCAPTCHA Enterprise на Google-логине не решается** через 2captcha (токен не принимается) — не тратить время.
-- Cookies нужны `sessionid` + `csrftoken` домена `.deepai.org` — их хватает и для `api.deepai.org`.
-- `deepseek-v4.1-flash-1017` в API называется `deepseek-v4.1-flash` (с суффиксом — `model_not_found`).
+| Симптом | Причина | Что делать |
+|---|---|---|
+| `/healthz` → 503 `db_locked` | запущен второй экземпляр | закрыть лишний процесс; лок забирается у мёртвого pid автоматически |
+| `chrome_ok: false` | нет Chrome или Playwright | `python -m playwright install chrome`, затем `GET /api/engine?refresh=1` |
+| `429 no_account_available` | нет живых аккаунтов под модель | добавить/проверить аккаунты, проверить баланс |
+| `401 invalid_api_key` | ключ отозван или скопирован с обрезкой | выпустить новый ключ |
+| `403 social_login_required` | аккаунт email-типа | такие аккаунты не годятся, только Google/Apple OAuth |
+| джоба `failed` после рестарта | процесс упал во время provision | перезапустить джобу; покупка идемпотентна по item |
+
+## Безопасность
+
+- Секреты только в `.env.local` и в зашифрованных `settings` (AES-256-GCM, scrypt); в git, логи и ответы не попадают.
+- Cookies аккаунтов и пароли BM шифруются тем же ключом; в UI и экспорте — только маски.
+- Панель закрыта паролем и httpOnly-cookie, мутации проверяют Origin; CSP с nonce.
+- `data/`, `prof/`, `.env*`, `bank.jsonl`, `accounts.txt` — в `.gitignore`.
 
 ## Правовая рамка
 
-Код собран для авторизованного red-team исследования биллинговых и lane-гейтов DeepAI Code.
-Использование — на свой риск и в рамках применимого законодательства.
+Код собран для авторизованного red-team исследования биллинговых и lane-гейтов DeepAI Code. Использование — на свой риск и в рамках применимого законодательства. Историческое описание пайплайна и экономики — в `docs/SPEC.md` и `engine/`.
