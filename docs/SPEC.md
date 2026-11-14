@@ -623,6 +623,7 @@ response.completed                (response с usage)
 | Anthropic | Chat |
 |---|---|
 | `system` | system-сообщение (блоки склеиваются через `\n\n`) |
+| `messages[].role: "system"` (так Claude Code присылает env-промпт) | приклеивается к system-сообщению через `\n\n` в порядке прихода, само сообщение в chat не попадает (B-024) |
 | `content: "text"` | строка |
 | блок `{"type":"text","text":…}` | текстовая часть |
 | блок `{"type":"image","source":{"type":"base64","media_type","data"}}` | `image_url` с `data:<media_type>;base64,<data>` |
@@ -1043,7 +1044,7 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 
 - `crypto`: round-trip AES-GCM, неверный тег → ошибка, детерминизм ключа из `HH_SECRET`.
 - `keys`: формат `^hh-api-[A-Za-z0-9]{48}$`, хеш, `timingSafeEqual`, отзыв.
-- `normalize`: 12 фикстур (chat/responses/messages, текст, изображение, tool_use/tool_result, system-блоки).
+- `normalize`: 13 фикстур (chat/responses/messages, текст, изображение, tool_use/tool_result, system-блоки, Claude Code `role:"system"` в `messages`).
 - `render-anthropic`: порядок событий стрима, `stop_reason`, `input_json_delta`.
 - `render-responses`: `previous_response_id`, `store:false`, `function_call`.
 - `failover`: таблица §16.2 (по одному кейсу на строку), лимит 8 попыток, `machine_required` ×3 → dead.
@@ -1073,12 +1074,12 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 ### 25.3 Приёмка
 
 - [x] `npm run build` — 0 ошибок, 0 предупреждений TS (принятые Turbopack-предупреждения — B-017).
-- [x] `npm run test` — все сценарии §25.1–25.2 зелёные: 98 тестов, 13 файлов.
+- [x] `npm run test` — все сценарии §25.1–25.2 зелёные: 99 тестов, 13 файлов.
 - [x] `npm run doctor` — все пункты `ok` (при остановленном сервере; при запущенном порт 3210 законно занят).
 - [x] Реальная закупка 1 логина и регистрация 1 аккаунта: статус `active`; баланс `0` Theos вместо 65 — ограничение провайдера B-022.
 - [x] Реальная проверка баланса 3 аккаунтов: `POST /api/accounts/check-all` → job `probe` (10 и 11), все `ok`, цифры совпадают с `/api/accounts` (ADR-019; `probe.py --all` читает только легаси `bank.jsonl`).
-- [!] Claude Code: `claude -p "say ok"` через шлюз → ответ, в `/logs` запись `endpoint=messages`. Заблокировано: CLI не установлен на машине; сам `POST /v1/messages` живьём отвечает 200.
-- [!] Codex CLI: запрос через `wire_api="responses"` → ответ, `endpoint=responses`. Заблокировано: CLI не установлен; `/v1/responses` живьём отвечает 200.
+- [x] Claude Code 2.1.325: `claude -p "hi" --model glm-5.3-flash --output-format text` через `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` → exit 0, ответ; `/api/requests` — `endpoint=messages`, 200, stream. Первоначально live-прогон выявил B-024 (`messages[].role=system`), после фикса повторный прогон прошёл.
+- [x] Codex CLI 0.169.0: `codex exec --skip-git-repo-check hi` с `CODEX_HOME/config.toml` (`wire_api="responses"`, `base_url=http://127.0.0.1:3210/v1`) → exit 0, ответ; `/api/requests` — `endpoint=responses`, 200, stream.
 - [!] Cline/Continue: обычный чат и стрим → ответ. Заблокировано: расширения не установлены; чат и стрим проверены curl-эквивалентом.
 - [!] Искусственное исчерпание (аккаунт с `balance=0`) → переключение, в статистике `attempts=2`. Заблокировано B-022: у всех аккаунтов `balance=0`, поэтому paid-модель отсекается выбором аккаунта (429, `attempts=0`); failover на `insufficient` покрыт моками.
 - [x] Перезапуск приложения: ключи, аккаунты, логи на месте (jobs 4–11, 3 аккаунта после двух рестартов); активные джобы помечаются `failed` с причиной `restart` (`failStaleJobs`, тест в `tests/unit/jobs.test.ts`).

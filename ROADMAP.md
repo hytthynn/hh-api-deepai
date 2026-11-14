@@ -4,7 +4,7 @@
 
 Легенда: `[ ]` не начато, `[x]` готово, `[~]` в работе, `[!]` заблокировано внешним условием.
 
-Проверки на 2026-11-14: `npm run typecheck`, `npm run lint`, `npm run test` (98/98, 9 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
+Проверки на 2026-11-14: `npm run typecheck`, `npm run lint`, `npm run test` (99/99, 13 файлов, 8.5 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
 
 ---
 
@@ -142,7 +142,9 @@
 - [x] Память: RSS Node 137.8 МБ → 142.0 МБ после 50-запросного прогона (+4.2), в бюджете §23 (≤220 МБ)
 - [~] Пул 20 аккаунтов и 50 одновременных стримов: 3 из 20 аккаунтов, одновременно максимум 3 слота; 50 запросов отправлено по 150 мс, 43×200/7×429 по штатному ожиданию слота. Прогон подтверждает ограничение на доступном пуле; тест §25.2.12 требует минимум 50 аккаунтов/слотов.
 - [x] TTFB в БД: после B-021 стримы пишут `requests.first_byte_ms` (первый живой запрос: `latency_ms=3254`, `first_byte_ms=2855`), поэтому ожидание слота отделяется от работы апстрима
-- [!] Live IDE-клиенты Claude Code, Codex CLI и Cline/Continue: приложения не установлены; соответствующие протоколы `messages`, `responses`, `chat` и streams отвечают 200 в живом HTTP smoke.
+- [x] Claude Code 2.1.325 через `/v1/messages`: live CLI exit 0, ответ получен; B-024 (системное сообщение в `messages[]`) выявлен и исправлен, повторный live-прогон успешен.
+- [x] Codex CLI 0.169.0 через `/v1/responses` (`wire_api="responses"`): live CLI exit 0, ответ получен; потоковый запрос записан с 200.
+- [!] Cline/Continue live: IDE-плагины не установлены, обычный чат и стрим подтверждены HTTP smoke.
 - [!] Реальное переключение при недостатке Theos: блокировано B-022 — все аккаунты имеют `balance=0`; free запросы успешно обслуживаются, paid-модели дают `no_account_available` до попытки. Failover на upstream `insufficient` проверяется интеграционными моками.
 - [x] Сохранность при рестарте: два production restart, все 3 аккаунта, jobs 4–11 и логи остались в SQLite; API-ключи хранятся хешами, отозванный ключ немедленно даёт 401.
 - [x] Smoke API-ключи (4–14) отозваны; живых ключей 0; реальные credentials/account cookies не печатались в smoke-вывод.
