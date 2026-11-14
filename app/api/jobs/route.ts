@@ -42,7 +42,7 @@ export const POST = api(
       throw new ApiError(
         'engine_not_ready',
         400,
-        'Chrome не найден. Выполните python -m playwright install chrome и повторите.',
+        'Браузер для регистрации не найден. Установите Google Chrome, задайте HH_CHROME или выполните python -m playwright install chromium.',
       );
     }
     const job = createProvisionJob(params);

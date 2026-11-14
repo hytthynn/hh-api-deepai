@@ -169,8 +169,10 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
             Регистрация недоступна
           </div>
           <div className="small" style={{ marginTop: 6 }}>
-            Chrome не найден{chromePath ? ` (${chromePath})` : ''}. Установите Google Chrome или укажите путь в{' '}
-            <span className="mono">engine/dpcode.py</span>. Ручное добавление и существующие аккаунты работают.
+            Chrome не найден{chromePath ? ` (${chromePath})` : ''}. Установите Google Chrome, задайте{' '}
+            <span className="mono">HH_CHROME</span> или выполните{' '}
+            <span className="mono">python -m playwright install chromium</span>. Ручное добавление и существующие
+            аккаунты работают.
           </div>
         </div>
       ) : null}
@@ -445,7 +447,7 @@ function ProvisionModal({
       {jobId === null ? (
         <>
           {!chromeOk ? (
-            <ErrorPanel message="Chrome не найден — регистрация недоступна. Установите Chrome и перезапустите приложение." />
+            <ErrorPanel message="Chrome не найден — регистрация недоступна. Установите Google Chrome, задайте HH_CHROME или выполните python -m playwright install chromium." />
           ) : null}
           {bmError ? <ErrorPanel message={`BM: ${bmError}`} /> : null}
 

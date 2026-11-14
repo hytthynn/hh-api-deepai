@@ -264,7 +264,7 @@ async function assertEngineReady(): Promise<void> {
   if (!health.chrome_ok) {
     throw new ProvisionError(
       'engine_not_ready',
-      'Chrome не найден. Выполните python -m playwright install chrome и повторите.',
+      'Браузер для регистрации не найден. Установите Google Chrome, задайте HH_CHROME или выполните python -m playwright install chromium.',
     );
   }
 }

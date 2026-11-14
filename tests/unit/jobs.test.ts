@@ -72,6 +72,7 @@ import {
   addJobItem,
   cancelJob,
   createJob,
+  failStaleJobs,
   getJob,
   listJobItems,
   updateJob,
@@ -98,7 +99,7 @@ describe('provision preflight', () => {
 
     const fresh = getJob(job.id);
     expect(fresh?.status).toBe('failed');
-    expect(fresh?.error).toMatch(/Chrome/);
+    expect(fresh?.error).toMatch(/браузер для регистрации не найден/i);
     expect(fresh?.spentUsd).toBe(0);
     expect(listJobItems(job.id)).toHaveLength(0);
     expect(registerCalls).toHaveLength(0);
@@ -157,5 +158,25 @@ describe('job item reuse', () => {
     const job = createJob({ type: 'provision', params: { type: 'provision', quantity: 1 }, total: 1 });
     addJobItem(job.id, { email: 'dup@ecolu.us', stage: 'failed' });
     expect(listJobItems(job.id)).toHaveLength(1);
+  });
+});
+
+describe('restart recovery', () => {
+  it('fails queued and running jobs after a restart, leaves finished ones alone', () => {
+    const queued = createJob({ type: 'provision', params: { type: 'provision', quantity: 1 }, total: 1 });
+    const running = createJob({ type: 'provision', params: { type: 'provision', quantity: 1 }, total: 1 });
+    updateJob(running.id, { status: 'running' });
+    const done = createJob({ type: 'provision', params: { type: 'provision', quantity: 1 }, total: 1 });
+    updateJob(done.id, { status: 'done' });
+
+    expect(failStaleJobs('прервано перезапуском приложения')).toBe(2);
+
+    const failedQueued = getJob(queued.id);
+    expect(failedQueued?.status).toBe('failed');
+    expect(failedQueued?.error).toBe('прервано перезапуском приложения');
+    expect(failedQueued?.finishedAt).toBeGreaterThan(0);
+    expect(getJob(running.id)?.status).toBe('failed');
+    expect(getJob(done.id)?.status).toBe('done');
+    expect(getJob(done.id)?.error).toBeNull();
   });
 });
