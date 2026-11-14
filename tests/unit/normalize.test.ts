@@ -313,6 +313,25 @@ describe('normalize: Anthropic Messages fixtures', () => {
     expect(countInputTokens(null, 'fallback')).toEqual({ tokens: 0, model: 'fallback' });
   });
 
+  it('normalizes Claude Code system-role messages and joins their text blocks', () => {
+    const normalized = normalizeAnthropic({
+      model: 'glm-5.3-flash',
+      max_tokens: 32_000,
+      system: [{ type: 'text', text: 'base system' }],
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'environment' }, { type: 'text', text: 'say ok' }] },
+        { role: 'system', content: [{ type: 'text', text: 'Claude Code system prompt' }] },
+        { role: 'assistant', content: 'prior response' },
+      ],
+    });
+
+    expect(normalized.request.messages).toEqual([
+      { role: 'system', content: 'base system\n\nClaude Code system prompt' },
+      { role: 'user', content: [{ type: 'text', text: 'environment' }, { type: 'text', text: 'say ok' }] },
+      { role: 'assistant', content: 'prior response' },
+    ]);
+  });
+
   it('rejects a missing max_tokens per the Anthropic contract', () => {
     const error = gatewayError(() =>
       normalizeAnthropic({ model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'x' }] }),

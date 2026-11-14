@@ -306,7 +306,8 @@ const anthropicBlockSchema = z
   .loose();
 
 const anthropicMessageSchema = z.object({
-  role: z.enum(['user', 'assistant']),
+  // Claude Code 2.x sends its environment prompt as {role:'system'} inside `messages` (B-024).
+  role: z.enum(['user', 'assistant', 'system']),
   content: z.union([z.string(), z.array(anthropicBlockSchema)]),
 });
 
@@ -347,20 +348,26 @@ export type AnthropicNormalized = {
   thinking: boolean;
 };
 
+function anthropicText(content: string | Array<{ text?: string }>): string {
+  if (typeof content === 'string') return content;
+  return content
+    .map((block) => block.text ?? '')
+    .filter(Boolean)
+    .join('\n\n');
+}
+
 export function normalizeAnthropic(body: unknown): AnthropicNormalized {
   const data = parseWith(anthropicBodySchema, body);
   const messages: ChatMessage[] = [];
-  if (data.system !== undefined) {
-    const systemText =
-      typeof data.system === 'string'
-        ? data.system
-        : data.system
-            .map((block) => block.text ?? '')
-            .filter(Boolean)
-            .join('\n\n');
-    if (systemText) messages.push({ role: 'system', content: systemText });
-  }
+  const systemParts: string[] = [];
+  if (data.system !== undefined) systemParts.push(anthropicText(data.system));
   for (const message of data.messages) {
+    if (message.role === 'system') systemParts.push(anthropicText(message.content));
+  }
+  const systemText = systemParts.filter(Boolean).join('\n\n');
+  if (systemText) messages.push({ role: 'system', content: systemText });
+  for (const message of data.messages) {
+    if (message.role === 'system') continue;
     if (typeof message.content === 'string') {
       messages.push({ role: message.role, content: message.content });
       continue;
