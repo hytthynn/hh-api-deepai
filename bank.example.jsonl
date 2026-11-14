@@ -1,0 +1,1 @@
+{"email":"demo@example.us","pw":"SECRET","ts":0,"stage":"ok","cookies":[{"name":"sessionid","value":"...","domain":".deepai.org"},{"name":"csrftoken","value":"...","domain":".deepai.org"}],"machine":"<sha256(MachineGuid+salt)>","theos_status":200,"theos":{"enabled":true,"balance":"65.00000","granted":"65.00000","refresh_at":"2026-11-15T12:00:00+00:00","lane_version":6},"ok":true}

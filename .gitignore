@@ -1,0 +1,28 @@
+# runtime data and secrets
+bank.jsonl
+accounts.txt
+.env
+.env.local
+prof/
+data/
+*.log
+.shim.pid
+tmp_*.json
+*.out
+
+# python
+__pycache__/
+*.pyc
+.wave.lock
+
+# node / next
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# os
+Thumbs.db
+.DS_Store
