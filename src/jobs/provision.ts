@@ -9,7 +9,6 @@ import {
   createJob,
   getJob,
   incrementJob,
-  isJobCancelled,
   pendingJobItems,
   updateJob,
   updateJobItem,
@@ -24,9 +23,9 @@ import { getBool, getInt, getSetting } from '@/src/adapters/db/repositories/sett
 import { encrypt } from '@/src/lib/crypto';
 import { jobMessageId } from '@/src/lib/ids';
 import { logger } from '@/src/lib/logger';
-import { enginePool } from '@/src/server/engine';
+import { engineHealth, enginePool } from '@/src/server/engine';
 import { probeAccount } from './probe';
-import { beginRun, endRun } from './runner';
+import { beginRun, cancelRequested, endRun, runSignal } from './runner';
 
 export type ProvisionParams = {
   quantity: number;
@@ -41,6 +40,16 @@ const ORDER_POLL_ATTEMPTS = 40;
 const ORDER_POLL_MS = 3_000;
 const REGISTER_TIMEOUT_MS = 180_000;
 const RETRYABLE_STAGE = /^(TIMEOUT|exc:|launch_err|engine_)/;
+
+class ProvisionError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'ProvisionError';
+    this.code = code;
+  }
+}
 
 export function createProvisionJob(params: ProvisionParams): Job {
   return createJob({ type: 'provision', params, total: Math.max(1, params.quantity) });
@@ -110,13 +119,28 @@ function loadPendingItems(jobId: number): JobItem[] {
   return pendingJobItems(jobId);
 }
 
+function cancelledItem(item: JobItem): { ok: false; account: null; reason: 'cancelled' } {
+  // Back to `purchased`: the login is already paid for and must stay resumable (§17.1).
+  updateJobItem(item.id, { stage: 'purchased', error: 'cancelled' });
+  return { ok: false, account: null, reason: 'cancelled' };
+}
+
+function isAbort(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted || (error instanceof Error && error.name === 'AbortError');
+}
+
 async function registerItem(
   item: JobItem,
   login: ParsedLogin,
-  options: { headless: boolean; proxy: string | null; onCancel: () => boolean },
+  options: {
+    headless: boolean;
+    proxy: string | null;
+    onCancel: () => boolean;
+    signal: AbortSignal;
+  },
 ): Promise<{ ok: boolean; account: Account | null; reason: string | null }> {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    if (options.onCancel()) return { ok: false, account: null, reason: 'cancelled' };
+    if (options.onCancel() || options.signal.aborted) return cancelledItem(item);
     updateJobItem(item.id, { stage: 'registering', attempts: attempt, error: null });
     try {
       const outcome = await enginePool().register({
@@ -126,8 +150,10 @@ async function registerItem(
         headless: options.headless,
         proxy: options.proxy,
         timeout_ms: REGISTER_TIMEOUT_MS,
+        signal: options.signal,
         onStage: (stage) => updateJobItem(item.id, { stage }),
       });
+      if (options.signal.aborted) return cancelledItem(item);
       if (!outcome.ok) {
         const reason = outcome.detail ? `${outcome.stage}: ${outcome.detail}` : outcome.stage;
         if (RETRYABLE_STAGE.test(outcome.stage) && attempt < 3) {
@@ -177,6 +203,7 @@ async function registerItem(
       updateJobItem(item.id, { stage: 'ok', error: null });
       return { ok: true, account, reason: null };
     } catch (error) {
+      if (isAbort(error, options.signal)) return cancelledItem(item);
       const message = error instanceof Error ? error.message : String(error);
       if (attempt < 3 && (error instanceof Error ? /launch|timeout|EPIPE|spawn/i.test(message) : false)) {
         logger.warn('jobs', `register ${login.email} crashed (${message}), retry ${attempt}/3`);
@@ -194,16 +221,16 @@ async function runRegistration(
   job: Job,
   items: JobItem[],
   logins: Map<number, ParsedLogin>,
-  options: { workers: number; headless: boolean; proxy: string | null },
+  options: { workers: number; headless: boolean; proxy: string | null; signal: AbortSignal },
 ): Promise<void> {
   const queue = [...items];
   const workers = Math.max(1, Math.min(options.workers, queue.length || 1));
-  const onCancel = (): boolean => isJobCancelled(job.id);
+  const onCancel = (): boolean => cancelRequested(job.id);
 
   await Promise.all(
     Array.from({ length: workers }, async () => {
       for (;;) {
-        if (onCancel()) return;
+        if (onCancel() || options.signal.aborted) return;
         const item = queue.shift();
         if (!item) return;
         const login = logins.get(item.id);
@@ -216,12 +243,30 @@ async function runRegistration(
           headless: options.headless,
           proxy: options.proxy,
           onCancel,
+          signal: options.signal,
         });
         if (outcome.reason === 'cancelled') return;
         incrementJob(job.id, { done: 1, ok: outcome.ok ? 1 : 0, failed: outcome.ok ? 0 : 1 });
       }
     }),
   );
+}
+
+/** Registration without Chrome cannot succeed; fail before any money is spent. */
+async function assertEngineReady(): Promise<void> {
+  const health = await engineHealth();
+  if (!health) {
+    throw new ProvisionError(
+      'engine_not_ready',
+      'Python-воркер не отвечает. Проверьте Python и Playwright: npm run doctor.',
+    );
+  }
+  if (!health.chrome_ok) {
+    throw new ProvisionError(
+      'engine_not_ready',
+      'Chrome не найден. Выполните python -m playwright install chrome и повторите.',
+    );
+  }
 }
 
 /**
@@ -231,6 +276,7 @@ async function runRegistration(
 export async function runProvisionJob(jobId: number): Promise<void> {
   if (!beginRun(jobId, 'provision')) return;
   updateJob(jobId, { status: 'running', startedAt: Date.now() });
+  const signal = runSignal(jobId);
   let job: Job | null = null;
   try {
     job = getJob(jobId);
@@ -241,6 +287,8 @@ export async function runProvisionJob(jobId: number): Promise<void> {
     const headless = params.headless ?? getBool('engine.headless', false);
     const proxy = params.proxy?.trim() || getSetting('engine.proxy') || null;
     const workers = Math.max(1, Math.min(8, params.workers ?? enginePoolWorkers()));
+
+    await assertEngineReady();
 
     const logins = new Map<number, ParsedLogin>();
     const queue: JobItem[] = [];
@@ -264,6 +312,11 @@ export async function runProvisionJob(jobId: number): Promise<void> {
       }
     } else {
       updateJob(jobId, { total: quantity });
+      if (cancelRequested(jobId)) {
+        updateJob(jobId, { status: 'cancelled', finishedAt: Date.now() });
+        logger.info('jobs', `provision ${jobId} cancelled before purchase`);
+        return;
+      }
       const purchaseResult = await purchase(quantity, productId);
       incrementJob(jobId, { spentUsd: purchaseResult.totalAmount });
       logger.info('jobs', `provision ${jobId}: purchased ${purchaseResult.items.length} logins`);
@@ -286,16 +339,24 @@ export async function runProvisionJob(jobId: number): Promise<void> {
       }
     }
 
-    await runRegistration(job, queue, logins, { workers, headless, proxy });
+    if (!cancelRequested(jobId)) {
+      await runRegistration(job, queue, logins, { workers, headless, proxy, signal });
+    }
 
-    const cancelled = isJobCancelled(jobId);
+    const cancelled = cancelRequested(jobId);
     updateJob(jobId, { status: cancelled ? 'cancelled' : 'done', finishedAt: Date.now() });
     logger.info('jobs', `provision ${jobId} ${cancelled ? 'cancelled' : 'finished'}`, {
       meta: { job_id: jobId },
     });
   } catch (error) {
+    if (isAbort(error, signal)) {
+      updateJob(jobId, { status: 'cancelled', finishedAt: Date.now() });
+      logger.info('jobs', `provision ${jobId} cancelled during registration`);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof BmError ? error.code : 'provision_failed';
+    const code =
+      error instanceof BmError || error instanceof ProvisionError ? error.code : 'provision_failed';
     updateJob(jobId, { status: 'failed', error: `${message}`.slice(0, 500), finishedAt: Date.now() });
     logger.error('jobs', `provision ${jobId} failed (${code}): ${message}`, { meta: { job_id: jobId, code } });
   } finally {

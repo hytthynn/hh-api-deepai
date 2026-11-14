@@ -66,25 +66,24 @@ export class EnginePool implements EnginePort {
       void worker.stop(1_000);
       return;
     }
+    let available: EngineWorker | null = null;
     if (!worker.running) {
       this.workers = this.workers.filter((entry) => entry !== worker);
-      return;
-    }
-    if (worker.jobsDone >= this.options.restartAfter) {
+    } else if (worker.jobsDone >= this.options.restartAfter) {
       this.workers = this.workers.filter((entry) => entry !== worker);
       void worker.stop(2_000);
     } else {
       this.idle.push(worker);
+      available = worker;
     }
     const waiter = this.waiters.shift();
-    if (waiter) {
-      const candidate = this.idle.pop() ?? worker;
-      waiter(candidate);
-    }
+    // A dead worker is handed back on purpose: `acquire` re-checks `running` and
+    // spawns a replacement instead of leaving the waiter parked forever.
+    if (waiter) waiter(available ?? worker);
   }
 
   async register(
-    command: Omit<RegisterCommand, 'op'> & { onStage?: (stage: string) => void },
+    command: Omit<RegisterCommand, 'op'> & { onStage?: (stage: string) => void; signal?: AbortSignal },
   ): Promise<RegisterOutcome> {
     const worker = await this.acquire();
     try {
@@ -97,7 +96,12 @@ export class EnginePool implements EnginePort {
         proxy: command.proxy,
         timeout_ms: command.timeout_ms,
       };
-      const result: WorkerResult = await worker.send(payload, command.timeout_ms, command.onStage);
+      const result: WorkerResult = await worker.send(
+        payload,
+        command.timeout_ms,
+        command.onStage,
+        command.signal,
+      );
       return {
         ok: result.ok === true,
         stage: result.stage ?? 'unknown',

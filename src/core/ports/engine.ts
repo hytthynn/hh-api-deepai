@@ -54,7 +54,9 @@ export type RegisterOutcome = {
 };
 
 export type EnginePort = {
-  register(command: Omit<RegisterCommand, 'op'> & { onStage?: (stage: string) => void }): Promise<RegisterOutcome>;
+  register(
+    command: Omit<RegisterCommand, 'op'> & { onStage?: (stage: string) => void; signal?: AbortSignal },
+  ): Promise<RegisterOutcome>;
   health(): Promise<WorkerHello | null>;
   shutdown(): Promise<void>;
 };

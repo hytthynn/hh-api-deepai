@@ -14,10 +14,12 @@ export const POST = api<{ id: string }>(
     if (job.status !== 'queued' && job.status !== 'running') {
       return jsonBody({ job, cancelled: false });
     }
-    requestCancel(id);
-    if (!isRunning(id)) cancelJob(id);
+    // Persist first: the runner may live in another module graph, and a crash between
+    // here and `requestCancel` must still leave the job cancelled on restart.
+    cancelJob(id);
+    if (isRunning(id)) requestCancel(id);
     const fresh = getJob(id);
-    return jsonBody({ job: fresh, cancelled: true });
+    return jsonBody({ job: fresh ?? job, cancelled: true });
   },
   { mutation: true },
 );

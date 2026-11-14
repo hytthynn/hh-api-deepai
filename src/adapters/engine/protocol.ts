@@ -19,6 +19,12 @@ type Pending = {
   timer: ReturnType<typeof setTimeout>;
 };
 
+function abortError(): Error {
+  const error = new Error('register aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
 export class EngineWorker {
   private readonly options: WorkerOptions;
   private process: ChildProcessWithoutNullStreams | null = null;
@@ -129,19 +135,50 @@ export class EngineWorker {
     }
   }
 
-  send(command: RegisterCommand, timeoutMs: number, onStage?: (stage: string) => void): Promise<WorkerResult> {
+  send(
+    command: RegisterCommand,
+    timeoutMs: number,
+    onStage?: (stage: string) => void,
+    signal?: AbortSignal,
+  ): Promise<WorkerResult> {
     const child = this.process;
     if (!child || !child.stdin.writable) return Promise.reject(new Error('engine worker is not running'));
+    if (signal?.aborted) return Promise.reject(abortError());
     return new Promise<WorkerResult>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(command.id);
         reject(new Error(`engine timeout after ${timeoutMs} ms`));
       }, timeoutMs + 10_000);
-      this.pending.set(command.id, { resolve: resolvePromise, reject, onStage, timer });
+      const onAbort = (): void => {
+        const entry = this.pending.get(command.id);
+        if (entry) {
+          clearTimeout(entry.timer);
+          this.pending.delete(command.id);
+        }
+        // The worker is single-operation and Chrome is a child of it: killing the tree
+        // is the only way to stop an OAuth run that already reached the browser.
+        this.kill();
+        reject(abortError());
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      const settle = (): void => signal?.removeEventListener('abort', onAbort);
+      this.pending.set(command.id, {
+        resolve: (result) => {
+          settle();
+          resolvePromise(result);
+        },
+        reject: (error) => {
+          settle();
+          reject(error);
+        },
+        onStage,
+        timer,
+      });
       child.stdin.write(`${JSON.stringify(command)}\n`, (error) => {
         if (error) {
           clearTimeout(timer);
           this.pending.delete(command.id);
+          settle();
           reject(error);
         }
       });
