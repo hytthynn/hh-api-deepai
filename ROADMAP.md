@@ -65,8 +65,8 @@
 
 - [x] `adapters/bm/client.ts` — balance, product, orders, purchases; ретраи, разбор HTML-строк
 - [x] `POST /api/settings/bm/test`, экран настроек BM; ключ только в зашифрованном `settings` (ADR-011)
-- [x] `jobs/runner.ts` — очередь, статусы, отмена, восстановление незавершённых джоб после рестарта
-- [x] `jobs/provision.ts` — чтение баланса → покупка → разбор → регистрация → probe, `spent_usd`
+- [x] `jobs/runner.ts` — очередь, статусы, отмена с остановкой worker/Chrome, восстановление незавершённых джоб после рестарта
+- [x] `jobs/provision.ts` — проверка Chrome до покупки, чтение баланса → покупка → разбор → регистрация → probe, `spent_usd`
 - [x] `POST/GET /api/jobs`, `POST /api/jobs/:id/cancel` (+ `GET /api/jobs` для баннера, ADR-012)
 - [x] UI: модалка «Добавить аккаунты» с оценкой стоимости и прогрессом items
 - [x] Тесты: разбор строк BM (`bm-parse.test.ts`), дедуп, частичный успех, отмена

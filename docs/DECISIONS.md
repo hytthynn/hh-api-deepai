@@ -112,3 +112,10 @@
 **Решение.** `src/lib/global-state.ts` — `globalState(key, init)` поверх `globalThis.__hhState` (тот же приём, что у соединения SQLite). На нём живут: runtime bundle (`booted`, `lock`, `signalsBound`, `state`), лог-синк (`sink`, `minLevel`, `pending`), токен-бакеты RPM, слоты аккаунтов, `EnginePool`, кеш кошелька BM, счётчики попыток входа.
 **Альтернативы.** `globalThis`-переменные вручную в каждом модуле (дублирование и разные имена); отказ от `instrumentation` и ленивый boot только из роутов (тогда `npm start` не поднимает cron до первого запроса).
 **Следствия.** Ровно один boot на процесс; `acquireLock` дополнительно забирает лок у своего pid, у мёртвого pid и у протухшей строки (`tests/unit/locks.test.ts`). Тесты используют `:memory:` БД и `resetGlobalState()` в setup.
+
+## ADR-018. Preflight provision и прерываемая отмена регистрации
+
+**Контекст.** Проверочный запуск provision был принят при `chrome_ok:false`: заказ BM успел купить логин, а cancel оставил job `running`, пока Playwright ждал OAuth. Runner и cancel-route также имели разные module-local карты в Next route graphs.
+**Решение.** Проверять `engineHealth().chrome_ok` перед созданием и запуском покупки; отмену сначала атомарно фиксировать в `jobs.status`, затем abort-ить in-flight `EngineWorker` через process-wide `globalState()` — worker убивает дерево процессов, включая Chrome. Прерванный item возвращается в `purchased`, чтобы его можно было дорегистрировать через `resumeJobId`.
+**Альтернативы.** Ждать таймаут Python (OAuth продолжает выполняться, job висит); помечать купленный логин `failed` (теряется resumability).
+**Следствия.** Нет покупки при недоступном Chrome; отмена сразу видна в API и останавливает браузер. `EnginePort.register` принимает `AbortSignal`.
