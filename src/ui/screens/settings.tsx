@@ -19,6 +19,7 @@ type Form = {
   restartAfter: string;
   syncInterval: string;
   defaultModel: string;
+  rpm: string;
   exposeDisabled: boolean;
   ttlDays: string;
 };
@@ -59,6 +60,7 @@ function formFrom(values: Record<string, string | null>): Form {
     restartAfter: values['engine.restart_after'] ?? '10',
     syncInterval: values['balance.sync_interval_min'] ?? '5',
     defaultModel: values['gateway.default_model'] ?? '',
+    rpm: values['gateway.rpm_limit'] ?? '60',
     exposeDisabled: values['gateway.expose_disabled'] === '1',
     ttlDays: values['responses.ttl_days'] ?? '7',
   };
@@ -355,6 +357,7 @@ function SettingsLoaded({
               onClick={() =>
                 void save('gateway', {
                   ...(form.defaultModel ? { 'gateway.default_model': form.defaultModel } : {}),
+                  'gateway.rpm_limit': Math.max(1, Math.min(6000, Number.parseInt(form.rpm, 10) || 60)),
                   'gateway.expose_disabled': form.exposeDisabled,
                   'responses.ttl_days': Math.max(1, Math.min(365, Number.parseInt(form.ttlDays, 10) || 7)),
                 })
@@ -378,6 +381,21 @@ function SettingsLoaded({
                   </option>
                 ))}
               </select>
+            </Field>
+            <Field
+              label="Лимит запросов, RPM"
+              htmlFor="gateway-rpm"
+              hint="общий для всех ключей; 1–6000 запросов в минуту"
+            >
+              <input
+                id="gateway-rpm"
+                className="input"
+                type="number"
+                min={1}
+                max={6000}
+                value={form.rpm}
+                onChange={(event) => update('rpm', event.target.value)}
+              />
             </Field>
             <Field label="Хранить Responses, дней" htmlFor="gateway-ttl" hint="previous_response_id доступен в этом окне">
               <input
