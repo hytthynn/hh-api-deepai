@@ -18,8 +18,7 @@ export const NAV: NavItem[] = [
   { href: '/keys', label: 'Ключи', icon: 'keys', key: 'k' },
   { href: '/models', label: 'Модели', icon: 'models', key: 'm' },
   { href: '/logs', label: 'Логи', icon: 'logs', key: 'l' },
-  { href: '/stats', label: 'Статистика', icon: 'stats', key: 's' },
-  { href: '/settings', label: 'Настройки', icon: 'settings', key: 't' },
+  { href: '/settings', label: 'Настройки', icon: 'settings', key: 's' },
 ];
 
 function isEditable(target: EventTarget | null): boolean {

@@ -3,19 +3,24 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { apiSend, errorText } from '../api';
-import { LineChart } from '../charts';
-import { fmtInt, fmtPercent, fmtTheos, fmtTime, fmtUsd } from '../format';
+import { BarList, ErrorBars, LineChart } from '../charts';
+import { fmtInt, fmtMs, fmtPercent, fmtTheos, fmtTime, fmtTokens, fmtUsd } from '../format';
 import { Icon } from '../icons';
 import { Page } from '../shell';
 import { useToast } from '../toast';
-import { Button, CardSkeleton, EmptyState, ErrorPanel, Skeleton } from '../ui';
+import { Button, CardSkeleton, EmptyState, ErrorPanel, Segmented, Skeleton } from '../ui';
 import { useApi, useNow } from '../use-api';
 import type { OverviewResponse, StatsResponse } from '../types';
+
+type Range = '24h' | '7d' | '30d';
+
+const RANGE_LABEL: Record<Range, string> = { '24h': '24 часа', '7d': '7 дней', '30d': '30 дней' };
 
 export function OverviewScreen() {
   const toast = useToast();
   const overview = useApi<OverviewResponse>('/api/overview', { intervalMs: 15_000 });
-  const stats = useApi<StatsResponse>('/api/stats?range=24h', { intervalMs: 60_000 });
+  const [range, setRange] = useState<Range>('24h');
+  const stats = useApi<StatsResponse>(`/api/stats?range=${range}`, { intervalMs: 60_000 });
   const now = useNow(15_000);
   const [syncing, setSyncing] = useState(false);
 
@@ -40,12 +45,31 @@ export function OverviewScreen() {
   return (
     <Page
       title="Обзор"
-      subtitle={overview.data ? `обновлено ${fmtTime(now)}` : undefined}
+      subtitle={overview.data ? `обновлено ${fmtTime(now)} · ${RANGE_LABEL[range]}` : undefined}
       actions={
-        <Button variant="ghost" size="sm" onClick={() => { overview.reload(); stats.reload(); }}>
-          <Icon name="refresh" size={14} />
-          Обновить
-        </Button>
+        <>
+          <Segmented<Range>
+            label="Диапазон"
+            value={range}
+            onChange={setRange}
+            options={[
+              { value: '24h', label: '24 ч' },
+              { value: '7d', label: '7 д' },
+              { value: '30d', label: '30 д' },
+            ]}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              overview.reload();
+              stats.reload();
+            }}
+          >
+            <Icon name="refresh" size={14} />
+            Обновить
+          </Button>
+        </>
       }
     >
       {overview.error ? <ErrorPanel message={overview.error} onRetry={overview.reload} /> : null}
@@ -67,7 +91,7 @@ export function OverviewScreen() {
       ) : null}
 
       {overview.loading && !overview.data ? (
-        <CardSkeleton />
+        <CardSkeleton count={6} />
       ) : (
         <div className="cards">
           <div className="card">
@@ -87,16 +111,26 @@ export function OverviewScreen() {
             </div>
           </div>
           <div className="card">
-            <div className="card-label">Запросы 24 ч</div>
+            <div className="card-label">Запросы</div>
             <div className="card-value">{fmtInt(totals?.requests)}</div>
-            <div className="card-hint">сегодня: {fmtInt(overview.data?.today.requests)}</div>
+            <div className="card-hint">стримов {fmtInt(totals?.streams)}</div>
           </div>
           <div className="card">
-            <div className="card-label">Доля ошибок</div>
-            <div className="card-value">{fmtPercent(totals?.error_rate)}</div>
+            <div className="card-label">Ошибки</div>
+            <div className="card-value">{fmtInt(totals?.errors)}</div>
+            <div className="card-hint">доля {fmtPercent(totals?.error_rate)}</div>
+          </div>
+          <div className="card">
+            <div className="card-label">Токены</div>
+            <div className="card-value">{fmtTokens((totals?.input_tokens ?? 0) + (totals?.output_tokens ?? 0))}</div>
             <div className="card-hint">
-              ошибок {fmtInt(totals?.errors)} · p95 {fmtInt(overview.data?.today.p95_ms)} мс
+              вход {fmtTokens(totals?.input_tokens)} · выход {fmtTokens(totals?.output_tokens)}
             </div>
+          </div>
+          <div className="card">
+            <div className="card-label">Потрачено Theos</div>
+            <div className="card-value">{fmtTheos(totals?.theos_spent)}</div>
+            <div className="card-hint">по замерам баланса до/после</div>
           </div>
         </div>
       )}
@@ -104,14 +138,13 @@ export function OverviewScreen() {
       <div className="panel">
         <div className="panel-head">
           <div>
-            <div className="panel-title">Запросы за 24 часа</div>
-            <div className="small faint">по часам, по всей панели</div>
+            <div className="panel-title">Запросы и ошибки</div>
+            <div className="small faint">{RANGE_LABEL[range]}, по интервалам</div>
           </div>
           <div className="chart-legend">
-            <span>
-              <span className="legend-line" />
-              запросы
-            </span>
+            <span>p50 {fmtMs(stats.data?.latency.p50)}</span>
+            <span>p95 {fmtMs(stats.data?.latency.p95)}</span>
+            <span>p99 {fmtMs(stats.data?.latency.p99)}</span>
           </div>
         </div>
         {stats.loading && !stats.data ? (
@@ -130,9 +163,104 @@ export function OverviewScreen() {
       <div className="grid-2">
         <div className="panel">
           <div className="panel-head">
+            <div className="panel-title">Ошибки по интервалам</div>
+          </div>
+          {series.length === 0 ? (
+            <EmptyState title="Нет данных" />
+          ) : (
+            <ErrorBars points={series.map((point) => ({ t: point.t, value: point.errors }))} format={(value) => fmtInt(value)} />
+          )}
+        </div>
+
+        <div className="panel">
+          <div className="panel-head">
+            <div className="panel-title">Топ ошибок</div>
+          </div>
+          {(stats.data?.top_errors.length ?? 0) === 0 ? (
+            <EmptyState title="Ошибок нет" />
+          ) : (
+            <BarList
+              items={(stats.data?.top_errors ?? []).map((row) => ({ label: row.code, value: row.count, error: true }))}
+              format={(value) => fmtInt(value)}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <div className="panel-title">По моделям</div>
+        </div>
+        {(stats.data?.by_model.length ?? 0) === 0 ? (
+          <EmptyState title="Нет данных" />
+        ) : (
+          <div className="table-wrap" style={{ border: 'none' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Модель</th>
+                  <th className="num">Запросы</th>
+                  <th className="num">Ошибки</th>
+                  <th className="num">p95</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.data?.by_model.map((row) => (
+                  <tr key={row.model}>
+                    <td className="mono">{row.model}</td>
+                    <td className="num mono">{fmtInt(row.requests)}</td>
+                    <td className="num mono" style={row.errors > 0 ? { color: 'var(--danger)' } : undefined}>
+                      {fmtInt(row.errors)}
+                    </td>
+                    <td className="num mono">{fmtMs(row.p95)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <div className="panel-title">По аккаунтам</div>
+        </div>
+        {(stats.data?.by_account.length ?? 0) === 0 ? (
+          <EmptyState title="Нет данных" />
+        ) : (
+          <div className="table-wrap" style={{ border: 'none' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th className="num">Запросы</th>
+                  <th className="num">Ошибки</th>
+                  <th className="num">Баланс</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.data?.by_account.map((row) => (
+                  <tr key={row.email}>
+                    <td className="mono">{row.email}</td>
+                    <td className="num mono">{fmtInt(row.requests)}</td>
+                    <td className="num mono" style={row.errors > 0 ? { color: 'var(--danger)' } : undefined}>
+                      {fmtInt(row.errors)}
+                    </td>
+                    <td className="num mono">{fmtTheos(row.balance)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="grid-2">
+        <div className="panel">
+          <div className="panel-head">
             <div className="panel-title">Последние ошибки</div>
             <Link href="/logs" className="btn btn-ghost btn-sm">
-              Все логи
+              Логи запросов
             </Link>
           </div>
           {overview.loading && !overview.data ? (
