@@ -1,10 +1,10 @@
 # ROADMAP
 
-Статус: **M0–M8 готовы** — 5 живых аккаунтов, три протокола, стрим, слоты, рестарт, Claude Code 2.1.325 и Codex CLI 0.169.0 проверены на реальном апстриме; UI переработан под ключи с квотой и показом, импорт аккаунтов, журнал запросов и объединённый «Обзор»; пул 20 аккаунтов, paid-баланс и Cline/Continue остаются ограничениями окружения (M8).
+Статус: **M0–M8 готовы** — 5 живых аккаунтов, три протокола, стрим, слоты, рестарт, Claude Code 2.1.325 и Codex CLI 0.169.0 проверены на реальном апстриме; UI переработан под ключи с квотой и показом, импорт аккаунтов с автоматическим входом, журнал запросов и объединённый «Обзор»; пул 20 аккаунтов, paid-баланс и Cline/Continue остаются ограничениями окружения (M8).
 
 Легенда: `[ ]` не начато, `[x]` готово, `[~]` в работе, `[!]` заблокировано внешним условием.
 
-Проверки на 2026-11-15: `npm run typecheck`, `npm run lint`, `npm run test` (105/105, 14 файлов, 10.5 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
+Проверки на 2026-11-15: `npm run typecheck`, `npm run lint`, `npm run test` (110/110, 15 файлов, 10.3 с), `npm run build` — зелёные; smoke import на `127.0.0.1:3210`: 202, job `login` обработал 2/2 (`GOOGLE_REJECTED` на тестовых логинах), активная задача вернула 409 `job_running`, тестовые строки удалены; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
 
 ---
 
@@ -150,7 +150,7 @@
 - [x] B-026: `403 check_in_refused` от `/theos` больше не считается ошибкой авторизации — `classifyFailure` отдаёт временный `upstream_check_in_refused` (cooldown 2 мин, без `fail_count`), probe проверяет такой аккаунт чатом и возвращает `active`; аккаунты 1–3, ложно помеченные `dead`, восстановлены, пул 5/5 `active`
 - [x] Чистка репозитория: удалены `legacy/`, `bank.jsonl`, `accounts.txt`, `bank.example.jsonl`, `engine/{wave,redeem,probe}.py`, `__pycache__`, `shim*.log`; `.gitignore`, `eslint.config.mjs`, README и SPEC приведены в соответствие (ADR-020)
 - [x] Ключи: показ полного ключа (`key_enc`, ADR-021), суммарная квота `token_limit` без выбора периода, `token_quota_exceeded` (429), физическое удаление вместо отзыва, RPM перенесён в «Настройки» как `gateway.rpm_limit` (ADR-022); сниппеты клиентов из UI убраны
-- [x] Аккаунты: полный email в таблице, панель добавления без продукта/прокси/headless, импорт готового списка `email|password` через `POST /api/accounts/import` (`created/skipped/invalid`)
+- [x] Аккаунты: полный email в таблице, панель добавления без продукта/прокси/headless, импорт готового списка `email|password` через `POST /api/accounts/import` (`created/skipped/invalid`) — каждый новый аккаунт сразу проходит вход (job `login`, ADR-023)
 - [x] Логи: экран показывает только журнал запросов (`requests`) — время, ключ, аккаунт, маршрут `openai`/`responses`/`anthropic`, модель, токены, успех; фильтры и пагинация
 - [x] Обзор: экран «Статистика» удалён, агрегаты и серии перенесены на `/` (диапазоны `24 ч`/`7 д`/`30 д`); `GET /api/stats` остаётся источником данных
 - [x] Сохранность при рестарте: два production restart, все аккаунты (сейчас 5), jobs 4–15 и логи остались в SQLite; API-ключи хранятся хешем + `key_enc` (ADR-021), удалённый ключ немедленно даёт 401 (ADR-022).

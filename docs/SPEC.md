@@ -213,7 +213,7 @@ Cache Components из Next 16.4 **не включаем**: все страниц
 │  │  ├─ upstream/{deepai.ts,headers.ts,cookies.ts}
 │  │  ├─ bm/client.ts
 │  │  └─ engine/{pool.ts,protocol.ts}
-│  ├─ jobs/{runner.ts,provision.ts,probe.ts,models-sync.ts,cron.ts}
+│  ├─ jobs/{runner.ts,auth.ts,provision.ts,login.ts,probe.ts,models-sync.ts,cron.ts}
 │  ├─ lib/{config.ts,crypto.ts,logger.ts,redact.ts,rate-limit.ts,ids.ts,locks.ts}
 │  ├─ ui/{components/*,hooks/*,charts/*}
 │  └─ instrumentation.ts
@@ -353,7 +353,7 @@ CREATE INDEX idx_logs_scope_level ON logs(scope, level, ts DESC);
 
 CREATE TABLE jobs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  type        TEXT NOT NULL,             -- provision|probe|models_sync
+  type        TEXT NOT NULL,             -- provision|login|probe|models_sync
   status      TEXT NOT NULL,             -- queued|running|cancelled|done|failed
   params      TEXT NOT NULL,
   total       INTEGER NOT NULL DEFAULT 0,
@@ -466,7 +466,7 @@ HH_MEASURE_THEOS=0
 | GET | `/api/overview` | счётчики, баланс, последние ошибки |
 | GET | `/api/accounts` | `?status=&q=&page=&per=50` |
 | POST | `/api/accounts` | `{email,password}` — ручное добавление |
-| POST | `/api/accounts/import` | `{text}` → `{created,skipped[],invalid[],total}` — пакетный импорт `email\|password` |
+| POST | `/api/accounts/import` | `{text}` → `{jobId,created,skipped[],invalid[],total}` — пакетный импорт `email\|password`; каждый созданный аккаунт сразу проходит вход (job `login`, §17.4) |
 | PATCH | `/api/accounts/:id` | `{status:"disabled"\|"active"}` |
 | DELETE | `/api/accounts/:id` | удаление вместе с cookies |
 | POST | `/api/accounts/:id/check` | проверка баланса одного |
@@ -777,6 +777,8 @@ pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──и�
 
 `POST /api/jobs {type:"provision", quantity, productId?, workers?, headless?, proxy?}`.
 
+Регистрация уже импортированных аккаунтов выполняется отдельной `login`-задачей по §17.4: импорт не покупает логины и после добавления в БД запускает этот же auth/probe pipeline.
+
 Шаги:
 
 0. Preflight: `GET /api/engine` (handshake воркера) — без `chrome_ok:true` job не создаётся и деньги не тратятся (`engine_not_ready`, 400).
@@ -818,6 +820,14 @@ pending ──probe ok──▶ active ──429/5xx──▶ cooldown ──и�
 Защита: `engine.restart_after=10` аккаунтов на процесс; при `launch_err` — перезапуск процесса; параллелизм не выше `engine.workers`; глобальный лимит одновременных Chrome — `workers`.
 
 Ретраи: `GOOGLE_CAPTCHA`, `IAP`, `GOOGLE_REJECTED`, `ALLAUTH_FAIL` — без повтора (брак логина), `stage='failed'`, `attempts=1`. `TIMEOUT`, `exc:*`, `launch_err:*` — до 2 повторов с новым процессом. `machine_required` после регистрации лечится на шлюзе, не в джобе.
+
+### 17.4 Задача `login` (вход в уже известные аккаунты)
+
+Импорт готового списка — это не только запись строк: без cookies аккаунт не может обслужить ни один запрос, поэтому `POST /api/accounts/import` создаёт строки `status='pending', source='import', password_enc` и сразу ставит job `login` с `params={accountIds[]}` (ответ `202`). Ответ расширен полем `jobId` (`null`, если новых аккаунтов нет).
+
+Шаги: preflight `chrome_ok` (иначе 400 `engine_not_ready`, ни строки не создаётся) → для каждого `id` item `queued` → `registering → probing → ok|failed` тем же конвейером §17.3 (`src/jobs/auth.ts`, общий с `provision`), `source` существующей строки не перезаписывается. `spent_usd` всегда `0`: BM не участвует.
+
+Отсутствующий аккаунт → `error='account_not_found'`; строка без `password_enc` → `error='no_password'` (браузер не запускается). Параллелизм — `engine.workers`. Отмена: `status='cancelled'` сразу, in-flight `register` прерывается, незавершённый item возвращается в `queued`, поэтому повторный импорт того же списка (после удаления не прошедших аккаунтов) снова их обработает. Повторный импорт уже существующего email — `skipped`, дублей нет. Пока активен другой job `login`, новый импорт отвечает 409 `job_running`.
 
 ---
 
@@ -939,7 +949,7 @@ Paid (16): `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2`, `gpt-6.1-
 
 1. **Вход** — центрированная карточка 360 px, поле пароля, ошибка под полем.
 2. **Обзор** — карточки (активные аккаунты, суммарный баланс, запросы, ошибки, токены, потрачено Theos за выбранный диапазон), селектор `24 ч`/`7 д`/`30 д`, график запросов и ошибок с p50/p95/p99, столбцы ошибок, топ ошибок, таблицы по моделям и аккаунтам, список последних ошибок, быстрые действия («Добавить аккаунты», «Создать ключ», «Синхронизировать модели»).
-3. **Аккаунты** — таблица: полный email, статус (бейдж), баланс, `refresh_at` (относительное время), последний запрос, действия (проверить, отключить, удалить). Фильтры-чипы по статусу, поиск. Кнопка «Добавить аккаунты» открывает панель: количество и воркеры, оценка стоимости, кнопка «Купить и зарегистрировать»; продукт BM, прокси и headless берутся из настроек. Кнопка «Импорт» принимает готовый список `email|password` (построчно) и показывает `created/skipped/invalid`. Прогресс — таблица items со стадиями и счётчиком `ok/failed`, кнопка «Отменить».
+3. **Аккаунты** — таблица: полный email, статус (бейдж), баланс, `refresh_at` (относительное время), последний запрос, действия (проверить, отключить, удалить). Фильтры-чипы по статусу, поиск. Кнопка «Добавить аккаунты» открывает панель: количество и воркеры, оценка стоимости, кнопка «Купить и зарегистрировать»; продукт BM, прокси и headless берутся из настроек. Кнопка «Импорт» принимает готовый список `email|password` (построчно), показывает `created/skipped/invalid` и после успешной постановки входа — job progress: каждый новый аккаунт проходит browser login, получает cookies и probe; аккаунты без успешного входа остаются `pending`/`dead` с причиной в item.
 4. **Ключи** — таблица (имя, префикс…last4, лимит токенов, создан, последний запрос, действия «Показать»/«Удалить»), модалка создания (имя + необязательный суммарный лимит токенов), просмотр полного ключа в модалке с кнопкой «Скопировать», подтверждение необратимого удаления. Готовых сниппетов для клиентов на экране нет: подключение описано в README.
 5. **Модели** — две группы (Free / Paid), колонки: id, контекст, max output, модальности, статус, тумблер «Доступна в API», кнопка «Синхронизировать», время последней синхронизации.
 6. **Логи** — журнал запросов: время, ключ, аккаунт, маршрут, модель, токены, успех/код ошибки; фильтры маршрута, ключа, результата и модели, пагинация, автообновление 5 с.
@@ -1078,7 +1088,7 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 ### 25.3 Приёмка
 
 - [x] `npm run build` — 0 ошибок, 0 предупреждений TS (принятые Turbopack-предупреждения — B-017).
-- [x] `npm run test` — все сценарии §25.1–§25.2 зелёные: 105 тестов, 14 файлов.
+- [x] `npm run test` — все сценарии §25.1–§25.2 зелёные: 110 тестов, 15 файлов.
 - [x] `npm run doctor` — все пункты `ok` (при остановленном сервере; при запущенном порт 3210 законно занят).
 - [x] Реальная закупка 1 логина и регистрация 1 аккаунта: статус `active`; баланс `0` Theos вместо 65 — ограничение провайдера B-022.
 - [x] Реальная проверка баланса: `POST /api/accounts/check-all` → job `probe` (10 и 11), все `ok`; после докупки аккаунтов 4–5 cron `balance sync: 5/5 ok`, цифры совпадают с `/api/accounts` (ADR-019).
@@ -1092,7 +1102,7 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 - [!] Пул 20 аккаунтов и сценарий §25.2.12 (20 стримов на 4 аккаунтах): на момент приёмки 5 аккаунтов из 20; прогон на доступном пуле — 50 запросов с шагом 150 мс, 43×200 / 7×429 по штатному ожиданию слота (M8).
 - [x] В `git status` нет `data/`, `prof/`, `.env.local`.
 - [x] Ключи: создание с лимитом токенов и без него, «Показать» возвращает полный ключ из `key_enc`, «Удалить» стирает строку (`requests.api_key_id` → `NULL`), запрос с удалённым ключом → 401; превышение `token_limit` → 429 `token_quota_exceeded` (смок на `127.0.0.1:3210`).
-- [x] Аккаунты: полный email в таблице, панель добавления без продукта/прокси/headless, импорт списка `email|password` → `created/skipped/invalid`.
+- [x] Аккаунты: полный email в таблице, панель добавления без продукта/прокси/headless, импорт списка `email|password` → `created/skipped/invalid`, каждый созданный аккаунт сразу проходит вход (job `login`, §17.4): cookies сохранены, probe → `active`; повторный импорт дублей не создаёт.
 - [x] Логи: журнал запросов с ключом, аккаунтом, маршрутом и токенами; фильтры маршрута/ключа/результата/модели работают на `requests`.
 - [x] Обзор: агрегаты статистики (карточки, диапазоны `24 ч`/`7 д`/`30 д`, график, топ ошибок, таблицы) на `/`; пункт «Статистика» из навигации удалён.
 
