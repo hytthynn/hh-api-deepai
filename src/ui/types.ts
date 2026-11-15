@@ -30,13 +30,21 @@ export type ApiKeyRow = {
   name: string;
   prefix: string;
   last4: string;
-  rpm_limit: number;
+  token_limit: number | null;
   created_at: number;
   last_used_at: number | null;
-  revoked_at: number | null;
 };
 
 export type KeysResponse = { keys: ApiKeyRow[] };
+
+export type KeyRevealResponse = { key: string; record: ApiKeyRow };
+
+export type ImportResponse = {
+  created: number;
+  skipped: string[];
+  invalid: string[];
+  total: number;
+};
 
 export type ModelRow = {
   id: string;
@@ -70,10 +78,12 @@ export type RequestRow = {
   ts: number;
   requestId: string;
   apiKeyId: number | null;
+  keyName: string | null;
   endpoint: 'chat' | 'responses' | 'messages' | 'count_tokens' | 'models';
   model: string | null;
   stream: number;
   accountId: number | null;
+  accountEmail: string | null;
   attempts: number;
   httpStatus: number | null;
   latencyMs: number | null;

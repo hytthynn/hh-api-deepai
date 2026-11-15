@@ -1,48 +1,56 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { closeDb } from '@/src/adapters/db/client';
 import { runMigrations } from '@/src/adapters/db/migrate';
-import { createKey, findActiveKeyByHash, getKey, listKeys, revokeKey } from '@/src/adapters/db/repositories/keys';
-import { API_KEY_PATTERN, generateApiKey, hashApiKey } from '@/src/lib/crypto';
+import { createKey, deleteKey, findKeyByHash, getKey, listKeys } from '@/src/adapters/db/repositories/keys';
+import { API_KEY_PATTERN, decrypt, encrypt, generateApiKey, hashApiKey } from '@/src/lib/crypto';
 import { authenticateRequest, extractApiKey } from '@/src/server/gateway/auth';
 
-function newKey(name = 'test', rpmLimit = 60) {
+function newKey(name = 'test', tokenLimit: number | null = null) {
   const raw = generateApiKey();
   const row = createKey({
     name,
     prefix: raw.slice(0, 11),
     last4: raw.slice(-4),
     keyHash: hashApiKey(raw),
-    rpmLimit,
+    keyEnc: encrypt(raw),
+    tokenLimit,
   });
   return { raw, row };
 }
 
-describe('keys: storage and revocation', () => {
+describe('keys: storage, reveal and deletion', () => {
   beforeAll(() => {
     closeDb();
     runMigrations();
   });
 
-  it('stores only the hash, prefix and last4', () => {
+  it('stores the hash, prefix, last4 and ciphertext — never the plaintext', () => {
     const { raw, row } = newKey('storage');
     expect(raw).toMatch(API_KEY_PATTERN);
     expect(row.keyHash).toBe(hashApiKey(raw));
     expect(row.keyHash).not.toContain(raw);
     expect(row.prefix).toBe(raw.slice(0, 11));
     expect(row.last4).toBe(raw.slice(-4));
-    expect(row.revokedAt).toBeNull();
+    expect(row.tokenLimit).toBeNull();
     const stored = JSON.stringify(getKey(row.id));
     expect(stored).not.toContain(raw);
+    expect(decrypt(row.keyEnc!)).toBe(raw);
   });
 
-  it('finds an active key by hash and stops finding it after revocation', () => {
-    const { raw, row } = newKey('revoke-me');
+  it('keeps the token quota when it is set', () => {
+    const { row } = newKey('quota', 250_000);
+    expect(row.tokenLimit).toBe(250_000);
+    expect(getKey(row.id)?.tokenLimit).toBe(250_000);
+  });
+
+  it('finds a key by hash and stops finding it after deletion', () => {
+    const { raw, row } = newKey('delete-me');
     const hash = hashApiKey(raw);
-    expect(findActiveKeyByHash(hash)?.id).toBe(row.id);
-    expect(revokeKey(row.id)).toBe(true);
-    expect(findActiveKeyByHash(hash)).toBeNull();
-    expect(getKey(row.id)?.revokedAt).toBeTypeOf('number');
-    expect(revokeKey(row.id)).toBe(false);
+    expect(findKeyByHash(hash)?.id).toBe(row.id);
+    expect(deleteKey(row.id)).toBe(true);
+    expect(findKeyByHash(hash)).toBeNull();
+    expect(getKey(row.id)).toBeNull();
+    expect(deleteKey(row.id)).toBe(false);
   });
 
   it('authenticates from Authorization, x-api-key and api-key headers', () => {
@@ -60,7 +68,7 @@ describe('keys: storage and revocation', () => {
       if (auth.ok) expect(auth.key.id).toBe(row.id);
     }
 
-    revokeKey(row.id);
+    deleteKey(row.id);
     expect(authenticateRequest(cases[0]!)).toEqual({ ok: false, reason: 'invalid' });
     expect(authenticateRequest(new Request(url))).toEqual({ ok: false, reason: 'missing' });
   });
