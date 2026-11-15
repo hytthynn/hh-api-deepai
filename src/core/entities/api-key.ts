@@ -4,13 +4,15 @@ export type ApiKey = {
   prefix: string;
   last4: string;
   keyHash: string;
-  rpmLimit: number;
+  /** AES-256-GCM ciphertext of the plaintext key (ADR-021); null for keys created before it. */
+  keyEnc: string | null;
+  /** Total token quota for the key lifetime; null = unlimited. */
+  tokenLimit: number | null;
   createdAt: number;
   lastUsedAt: number | null;
-  revokedAt: number | null;
 };
 
-export type ApiKeyPublic = Omit<ApiKey, 'keyHash'> & { masked: string };
+export type ApiKeyPublic = Omit<ApiKey, 'keyHash' | 'keyEnc'> & { masked: string };
 
 export function toPublicKey(key: ApiKey): ApiKeyPublic {
   return {
@@ -18,10 +20,9 @@ export function toPublicKey(key: ApiKey): ApiKeyPublic {
     name: key.name,
     prefix: key.prefix,
     last4: key.last4,
-    rpmLimit: key.rpmLimit,
+    tokenLimit: key.tokenLimit,
     createdAt: key.createdAt,
     lastUsedAt: key.lastUsedAt,
-    revokedAt: key.revokedAt,
     masked: `${key.prefix}…${key.last4}`,
   };
 }

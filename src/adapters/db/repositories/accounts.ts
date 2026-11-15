@@ -31,6 +31,16 @@ export function getAccountByEmail(email: string): Account | null {
   return row ? toAccount(row) : null;
 }
 
+/** Import matching is case-insensitive: `Ivan@Mail.ru` and `ivan@mail.ru` are the same login. */
+export function getAccountByEmailCI(email: string): Account | null {
+  const row = db()
+    .select()
+    .from(accounts)
+    .where(sql`lower(${accounts.email}) = ${email.toLowerCase()}`)
+    .get();
+  return row ? toAccount(row) : null;
+}
+
 export type AccountFilter = { status?: string; q?: string; page?: number; per?: number };
 
 export function listAccounts(filter: AccountFilter = {}): { rows: Account[]; total: number } {

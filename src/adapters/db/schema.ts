@@ -55,10 +55,10 @@ export const apiKeys = sqliteTable('api_keys', {
   prefix: text('prefix').notNull(),
   last4: text('last4').notNull(),
   keyHash: text('key_hash').notNull().unique(),
-  rpmLimit: integer('rpm_limit').notNull().default(60),
+  keyEnc: text('key_enc'),
+  tokenLimit: integer('token_limit'),
   createdAt: integer('created_at').notNull(),
   lastUsedAt: integer('last_used_at'),
-  revokedAt: integer('revoked_at'),
 });
 
 export const models = sqliteTable('models', {
@@ -96,7 +96,11 @@ export const requests = sqliteTable(
     client: text('client'),
     detail: text('detail'),
   },
-  (t) => [index('idx_requests_ts').on(t.ts), index('idx_requests_model_ts').on(t.model, t.ts)],
+  (t) => [
+    index('idx_requests_ts').on(t.ts),
+    index('idx_requests_model_ts').on(t.model, t.ts),
+    index('idx_requests_key').on(t.apiKeyId),
+  ],
 );
 
 export const logs = sqliteTable(

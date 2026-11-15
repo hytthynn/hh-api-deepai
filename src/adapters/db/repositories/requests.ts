@@ -2,7 +2,7 @@ import 'server-only';
 import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import type { RequestRecord } from '@/src/core/entities/request-log';
 import { db } from '../client';
-import { accounts, requests } from '../schema';
+import { accounts, apiKeys, requests } from '../schema';
 
 export function insertRequest(record: RequestRecord): void {
   db()
@@ -33,6 +33,9 @@ export function insertRequest(record: RequestRecord): void {
 export type RequestFilter = {
   model?: string;
   status?: string;
+  endpoint?: string;
+  keyId?: number;
+  accountId?: number;
   from?: number;
   to?: number;
   page?: number;
@@ -44,14 +47,41 @@ export function queryRequests(filter: RequestFilter = {}) {
   const page = Math.max(1, filter.page ?? 1);
   const conditions = [];
   if (filter.model) conditions.push(eq(requests.model, filter.model));
+  if (filter.endpoint) conditions.push(eq(requests.endpoint, filter.endpoint));
+  if (filter.keyId) conditions.push(eq(requests.apiKeyId, filter.keyId));
+  if (filter.accountId) conditions.push(eq(requests.accountId, filter.accountId));
   if (filter.from) conditions.push(gte(requests.ts, filter.from));
   if (filter.to) conditions.push(lte(requests.ts, filter.to));
   if (filter.status === 'error') conditions.push(sql`(${requests.httpStatus} >= 400 OR ${requests.errorCode} IS NOT NULL)`);
-  if (filter.status === 'ok') conditions.push(sql`${requests.httpStatus} < 400`);
+  if (filter.status === 'ok') conditions.push(sql`${requests.httpStatus} < 400 AND ${requests.errorCode} IS NULL`);
   const where = conditions.length > 0 ? and(...conditions) : undefined;
   const rows = db()
-    .select()
+    .select({
+      id: requests.id,
+      ts: requests.ts,
+      requestId: requests.requestId,
+      apiKeyId: requests.apiKeyId,
+      keyName: apiKeys.name,
+      endpoint: requests.endpoint,
+      model: requests.model,
+      stream: requests.stream,
+      accountId: requests.accountId,
+      accountEmail: accounts.email,
+      attempts: requests.attempts,
+      httpStatus: requests.httpStatus,
+      latencyMs: requests.latencyMs,
+      firstByteMs: requests.firstByteMs,
+      inputTokens: requests.inputTokens,
+      outputTokens: requests.outputTokens,
+      theosBefore: requests.theosBefore,
+      theosAfter: requests.theosAfter,
+      errorCode: requests.errorCode,
+      client: requests.client,
+      detail: requests.detail,
+    })
     .from(requests)
+    .leftJoin(apiKeys, eq(requests.apiKeyId, apiKeys.id))
+    .leftJoin(accounts, eq(requests.accountId, accounts.id))
     .where(where)
     .orderBy(desc(requests.id))
     .limit(per)
@@ -59,6 +89,16 @@ export function queryRequests(filter: RequestFilter = {}) {
     .all();
   const total = db().select({ count: sql<number>`count(*)` }).from(requests).where(where).get()?.count ?? 0;
   return { rows, total, page, per };
+}
+
+/** Total tokens ever spent through a key — the basis of the lifetime quota (ADR-022). */
+export function tokensUsedByKey(keyId: number): number {
+  const row = db()
+    .select({ used: sql<number>`COALESCE(SUM(${requests.inputTokens} + ${requests.outputTokens}), 0)` })
+    .from(requests)
+    .where(eq(requests.apiKeyId, keyId))
+    .get();
+  return row?.used ?? 0;
 }
 
 export type StatsRange = '24h' | '7d' | '30d';

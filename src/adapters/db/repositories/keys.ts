@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type { ApiKey } from '@/src/core/entities/api-key';
 import { db } from '../client';
 import { apiKeys } from '../schema';
@@ -22,7 +22,8 @@ export function createKey(input: {
   prefix: string;
   last4: string;
   keyHash: string;
-  rpmLimit: number;
+  keyEnc?: string | null;
+  tokenLimit?: number | null;
 }): ApiKey {
   const row = db()
     .insert(apiKeys)
@@ -32,21 +33,14 @@ export function createKey(input: {
   return toKey(row);
 }
 
-export function findActiveKeyByHash(hash: string): ApiKey | null {
-  const row = db()
-    .select()
-    .from(apiKeys)
-    .where(and(eq(apiKeys.keyHash, hash), isNull(apiKeys.revokedAt)))
-    .get();
+export function findKeyByHash(hash: string): ApiKey | null {
+  const row = db().select().from(apiKeys).where(eq(apiKeys.keyHash, hash)).get();
   return row ? toKey(row) : null;
 }
 
-export function revokeKey(id: number): boolean {
-  const result = db()
-    .update(apiKeys)
-    .set({ revokedAt: Date.now() })
-    .where(and(eq(apiKeys.id, id), isNull(apiKeys.revokedAt)))
-    .run();
+/** SPEC §11: keys are deleted, not revoked — rows disappear together with their history link. */
+export function deleteKey(id: number): boolean {
+  const result = db().delete(apiKeys).where(eq(apiKeys.id, id)).run();
   return result.changes === 1;
 }
 
