@@ -40,6 +40,7 @@ export type KeysResponse = { keys: ApiKeyRow[] };
 export type KeyRevealResponse = { key: string; record: ApiKeyRow };
 
 export type ImportResponse = {
+  jobId: number | null;
   created: number;
   skipped: string[];
   invalid: string[];
@@ -101,7 +102,7 @@ export type RequestsResponse = { rows: RequestRow[]; total: number; page: number
 
 export type Job = {
   id: number;
-  type: 'provision' | 'probe' | 'models_sync';
+  type: 'provision' | 'login' | 'probe' | 'models_sync';
   status: 'queued' | 'running' | 'cancelled' | 'done' | 'failed';
   params: string;
   total: number;

@@ -32,6 +32,7 @@ const STATUS_FILTERS = [
 const STAGE_LABEL: Record<string, string> = {
   queued: 'в очереди',
   purchased: 'куплен',
+  oauth: 'вход в Google',
   registering: 'регистрация',
   probing: 'проверка',
   ok: 'готов',
@@ -375,7 +376,11 @@ function ImportModal({ onClose }: { onClose: () => void }) {
     try {
       const payload = await apiSend<ImportResponse>('/api/accounts/import', 'POST', { text });
       setResult(payload);
-      toast.success(`Импортировано: ${payload.created}`);
+      toast.success(
+        payload.jobId === null
+          ? `Импортировано: ${payload.created}`
+          : `Импортировано: ${payload.created}, вход запущен`,
+      );
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -448,12 +453,22 @@ function ImportModal({ onClose }: { onClose: () => void }) {
               </table>
             </div>
           ) : null}
+          {result.jobId !== null ? (
+            <div className="stack-8">
+              <div className="card-label">Вход в аккаунты #{result.jobId}</div>
+              <JobProgress jobId={result.jobId} emptyHint="Готовим вход в аккаунты…" />
+            </div>
+          ) : (
+            <div className="small faint">
+              Новых аккаунтов нет — входить не в кого. Дубликаты пропущены.
+            </div>
+          )}
         </div>
       ) : (
         <Field
           label="Список логинов"
           htmlFor="import-text"
-          hint="email|password или email:password, по одному на строку; дубликаты пропускаются"
+          hint="email|password или email:password, по одному на строку; дубликаты пропускаются. Каждый новый аккаунт сразу проходит вход через браузер."
           error={error}
         >
           <textarea
@@ -636,7 +651,7 @@ function ProvisionModal({
   );
 }
 
-function JobProgress({ jobId }: { jobId: number }) {
+function JobProgress({ jobId, emptyHint }: { jobId: number; emptyHint?: string }) {
   const poll = useApi<JobResponse>(`/api/jobs/${jobId}`, { intervalMs: 1_500 });
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -689,7 +704,7 @@ function JobProgress({ jobId }: { jobId: number }) {
       <div className="table-wrap" style={{ maxHeight: 320, overflow: 'auto' }}>
         {items.length === 0 ? (
           <div className="small faint" style={{ padding: 16 }}>
-            Ожидаем выдачу логинов из BM…
+            {emptyHint ?? 'Ожидаем выдачу логинов из BM…'}
           </div>
         ) : (
           <table className="table">
