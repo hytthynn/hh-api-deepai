@@ -79,15 +79,15 @@
 
 - [x] `core/gateway/normalize.ts` (chat), `errors.ts`, `sse.ts`
 - [x] `core/gateway/failover.ts` — таблица §16.2, лимит 8, кулдауны, `machine_required` ротацией (макс. 2)
-- [x] `POST/GET/DELETE /api/keys`, показ ключа один раз, `sha256(pepper||key)` в БД
-- [x] Аутентификация шлюза (`Authorization`, `x-api-key`), RPM-бакеты, `x-request-id`, `x-hh-attempts`
+- [x] `POST/GET/DELETE /api/keys`, `sha256(pepper||key)` в БД (показ ключа — ADR-021, квота и физическое удаление — ADR-022)
+- [x] Аутентификация шлюза (`Authorization`, `x-api-key`), RPM-бакет шлюза (ADR-022), `x-request-id`, `x-hh-attempts`
 - [x] `GET /v1/models`, `GET /v1/models/:id` (27 моделей: 11 free / 16 paid)
 - [x] `POST /v1/chat/completions` — non-stream, stream (байт-прозрачный passthrough + `[DONE]`), tools, usage
 - [x] Слоты, lease 15 мин, abort по разрыву клиента, `release()` в `finally`/`finish()` (B-015)
 - [x] `requests` батчами; тесты failover и конкурентности (§25.2)
-- [x] UI: экран ключей + сниппеты для Claude Code / Codex / Cline / SDK
+- [x] UI: экран ключей (сниппеты клиентов позже убраны, см. M8)
 
-**Приёмка:** пройдена на моке (429 первого аккаунта → 200 со второго, `x-hh-attempts: 2`, отзыв ключа → 401 `invalid_api_key`, нет аккаунтов → 429 `no_account_available`) и на живом аккаунте: non-stream и stream `glm-5.3-flash` → 200, `[DONE]` в конце.
+**Приёмка:** пройдена на моке (429 первого аккаунта → 200 со второго, `x-hh-attempts: 2`, удаление ключа → 401 `invalid_api_key`, нет аккаунтов → 429 `no_account_available`) и на живом аккаунте: non-stream и stream `glm-5.3-flash` → 200, `[DONE]` в конце.
 
 ---
 
@@ -111,7 +111,7 @@
 - [x] `GET /api/logs` — фильтры, курсор, ретеншн; `DELETE /api/logs` (ADR-012)
 - [x] `GET /api/stats` — агрегаты и серии §20.2
 - [x] SVG-графики (линия, бары) без библиотек, карточки обзора
-- [x] UI: логи (live-хвост 2 с), статистика, обзор
+- [x] UI: логи (live-хвост 2 с), статистика, обзор (оба экрана переработаны в M8: журнал запросов и объединённый «Обзор»)
 - [x] Cron ретеншна и `PRAGMA optimize`
 
 **Приёмка:** пройдена. `/v1/models` отдаёт 27 моделей, выключенная модель исчезает, агрегаты за 24 ч заполняются.
