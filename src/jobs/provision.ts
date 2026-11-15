@@ -1,9 +1,7 @@
 import 'server-only';
 import type { Job, JobItem } from '@/src/core/entities/job';
-import type { Account } from '@/src/core/entities/account';
 import type { ParsedLogin } from '@/src/core/ports/bm';
 import { BmClient, BmError, bmConfigFromSettings, parseLogins } from '@/src/adapters/bm/client';
-import { serializeCookies } from '@/src/adapters/upstream/cookies';
 import {
   addJobItem,
   createJob,
@@ -13,18 +11,10 @@ import {
   updateJob,
   updateJobItem,
 } from '@/src/adapters/db/repositories/jobs';
-import {
-  createAccount,
-  getAccount,
-  getAccountByEmail,
-  updateAccount,
-} from '@/src/adapters/db/repositories/accounts';
+import { getAccountByEmail } from '@/src/adapters/db/repositories/accounts';
 import { getBool, getInt, getSetting } from '@/src/adapters/db/repositories/settings';
-import { encrypt } from '@/src/lib/crypto';
-import { jobMessageId } from '@/src/lib/ids';
 import { logger } from '@/src/lib/logger';
-import { engineHealth, enginePool } from '@/src/server/engine';
-import { probeAccount } from './probe';
+import { EngineNotReadyError, assertEngineReady, isAbort, runAuthQueue } from './auth';
 import { beginRun, cancelRequested, endRun, runSignal } from './runner';
 
 export type ProvisionParams = {
@@ -38,18 +28,6 @@ export type ProvisionParams = {
 
 const ORDER_POLL_ATTEMPTS = 40;
 const ORDER_POLL_MS = 3_000;
-const REGISTER_TIMEOUT_MS = 180_000;
-const RETRYABLE_STAGE = /^(TIMEOUT|exc:|launch_err|engine_)/;
-
-class ProvisionError extends Error {
-  readonly code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = 'ProvisionError';
-    this.code = code;
-  }
-}
 
 export function createProvisionJob(params: ProvisionParams): Job {
   return createJob({ type: 'provision', params, total: Math.max(1, params.quantity) });
@@ -117,156 +95,6 @@ async function purchase(quantity: number, productId: number): Promise<PurchaseRe
 
 function loadPendingItems(jobId: number): JobItem[] {
   return pendingJobItems(jobId);
-}
-
-function cancelledItem(item: JobItem): { ok: false; account: null; reason: 'cancelled' } {
-  // Back to `purchased`: the login is already paid for and must stay resumable (§17.1).
-  updateJobItem(item.id, { stage: 'purchased', error: 'cancelled' });
-  return { ok: false, account: null, reason: 'cancelled' };
-}
-
-function isAbort(error: unknown, signal: AbortSignal): boolean {
-  return signal.aborted || (error instanceof Error && error.name === 'AbortError');
-}
-
-async function registerItem(
-  item: JobItem,
-  login: ParsedLogin,
-  options: {
-    headless: boolean;
-    proxy: string | null;
-    onCancel: () => boolean;
-    signal: AbortSignal;
-  },
-): Promise<{ ok: boolean; account: Account | null; reason: string | null }> {
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    if (options.onCancel() || options.signal.aborted) return cancelledItem(item);
-    updateJobItem(item.id, { stage: 'registering', attempts: attempt, error: null });
-    try {
-      const outcome = await enginePool().register({
-        id: jobMessageId(),
-        email: login.email,
-        password: login.password,
-        headless: options.headless,
-        proxy: options.proxy,
-        timeout_ms: REGISTER_TIMEOUT_MS,
-        signal: options.signal,
-        onStage: (stage) => updateJobItem(item.id, { stage }),
-      });
-      if (options.signal.aborted) return cancelledItem(item);
-      if (!outcome.ok) {
-        const reason = outcome.detail ? `${outcome.stage}: ${outcome.detail}` : outcome.stage;
-        if (RETRYABLE_STAGE.test(outcome.stage) && attempt < 3) {
-          logger.warn('jobs', `register ${login.email} failed (${outcome.stage}), retry ${attempt}/3`, {
-            meta: { stage: outcome.stage },
-          });
-          continue;
-        }
-        updateJobItem(item.id, { stage: 'failed', error: reason.slice(0, 300) });
-        logger.warn('jobs', `register ${login.email} failed: ${reason}`, { meta: { stage: outcome.stage } });
-        return { ok: false, account: null, reason };
-      }
-
-      updateJobItem(item.id, { stage: 'probing' });
-      const cookiesEnc = encrypt(serializeCookies(outcome.cookies));
-      const passwordEnc = encrypt(login.password);
-      const existing = getAccountByEmail(login.email);
-      let accountId: number;
-      if (existing) {
-        updateAccount(existing.id, {
-          cookiesEnc,
-          passwordEnc,
-          machine: outcome.machine ?? existing.machine,
-          status: 'pending',
-        });
-        accountId = existing.id;
-      } else {
-        const created = createAccount({
-          email: login.email,
-          passwordEnc,
-          cookiesEnc,
-          machine: outcome.machine,
-          status: 'pending',
-          source: 'bm',
-        });
-        accountId = created.id;
-      }
-      updateJobItem(item.id, { accountId, email: login.email });
-
-      const account = getAccount(accountId);
-      if (!account) return { ok: false, account: null, reason: 'account_not_found' };
-      const probe = await probeAccount(account, { chat: true });
-      if (!probe.ok) {
-        updateJobItem(item.id, { stage: 'failed', error: `probe: ${probe.reason ?? 'failed'}`.slice(0, 300) });
-        return { ok: false, account, reason: probe.reason };
-      }
-      updateJobItem(item.id, { stage: 'ok', error: null });
-      return { ok: true, account, reason: null };
-    } catch (error) {
-      if (isAbort(error, options.signal)) return cancelledItem(item);
-      const message = error instanceof Error ? error.message : String(error);
-      if (attempt < 3 && (error instanceof Error ? /launch|timeout|EPIPE|spawn/i.test(message) : false)) {
-        logger.warn('jobs', `register ${login.email} crashed (${message}), retry ${attempt}/3`);
-        continue;
-      }
-      updateJobItem(item.id, { stage: 'failed', error: message.slice(0, 300) });
-      logger.error('jobs', `register ${login.email} crashed: ${message}`);
-      return { ok: false, account: null, reason: message };
-    }
-  }
-  return { ok: false, account: null, reason: 'retries_exhausted' };
-}
-
-async function runRegistration(
-  job: Job,
-  items: JobItem[],
-  logins: Map<number, ParsedLogin>,
-  options: { workers: number; headless: boolean; proxy: string | null; signal: AbortSignal },
-): Promise<void> {
-  const queue = [...items];
-  const workers = Math.max(1, Math.min(options.workers, queue.length || 1));
-  const onCancel = (): boolean => cancelRequested(job.id);
-
-  await Promise.all(
-    Array.from({ length: workers }, async () => {
-      for (;;) {
-        if (onCancel() || options.signal.aborted) return;
-        const item = queue.shift();
-        if (!item) return;
-        const login = logins.get(item.id);
-        if (!login) {
-          updateJobItem(item.id, { stage: 'failed', error: 'bad_line' });
-          incrementJob(job.id, { done: 1, failed: 1 });
-          continue;
-        }
-        const outcome = await registerItem(item, login, {
-          headless: options.headless,
-          proxy: options.proxy,
-          onCancel,
-          signal: options.signal,
-        });
-        if (outcome.reason === 'cancelled') return;
-        incrementJob(job.id, { done: 1, ok: outcome.ok ? 1 : 0, failed: outcome.ok ? 0 : 1 });
-      }
-    }),
-  );
-}
-
-/** Registration without Chrome cannot succeed; fail before any money is spent. */
-async function assertEngineReady(): Promise<void> {
-  const health = await engineHealth();
-  if (!health) {
-    throw new ProvisionError(
-      'engine_not_ready',
-      'Python-воркер не отвечает. Проверьте Python и Playwright: npm run doctor.',
-    );
-  }
-  if (!health.chrome_ok) {
-    throw new ProvisionError(
-      'engine_not_ready',
-      'Браузер для регистрации не найден. Установите Google Chrome, задайте HH_CHROME или выполните python -m playwright install chromium.',
-    );
-  }
 }
 
 /**
@@ -339,8 +167,15 @@ export async function runProvisionJob(jobId: number): Promise<void> {
       }
     }
 
-    if (!cancelRequested(jobId)) {
-      await runRegistration(job, queue, logins, { workers, headless, proxy, signal });
+    if (!cancelRequested(jobId) && queue.length > 0) {
+      await runAuthQueue(job.id, queue, logins, {
+        workers,
+        headless,
+        proxy,
+        signal,
+        source: 'bm',
+        cancelStage: 'purchased',
+      });
     }
 
     const cancelled = cancelRequested(jobId);
@@ -356,7 +191,7 @@ export async function runProvisionJob(jobId: number): Promise<void> {
     }
     const message = error instanceof Error ? error.message : String(error);
     const code =
-      error instanceof BmError || error instanceof ProvisionError ? error.code : 'provision_failed';
+      error instanceof BmError || error instanceof EngineNotReadyError ? error.code : 'provision_failed';
     updateJob(jobId, { status: 'failed', error: `${message}`.slice(0, 500), finishedAt: Date.now() });
     logger.error('jobs', `provision ${jobId} failed (${code}): ${message}`, { meta: { job_id: jobId, code } });
   } finally {

@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { api, jsonBody, readJson } from '@/src/server/api';
-import { parseLogins } from '@/src/adapters/bm/client';
-import { createAccount, getAccountByEmailCI } from '@/src/adapters/db/repositories/accounts';
-import { encrypt } from '@/src/lib/crypto';
+import { api, ApiError, jsonBody, readJson } from '@/src/server/api';
+import { activeJobOfType } from '@/src/adapters/db/repositories/jobs';
+import { enginePreflightError } from '@/src/jobs/auth';
+import { importAccounts, runLoginJob } from '@/src/jobs/login';
 import { logger } from '@/src/lib/logger';
 
 export const runtime = 'nodejs';
@@ -12,32 +12,27 @@ const importSchema = z.object({
   text: z.string().min(1, 'Вставьте список логинов').max(500_000),
 });
 
-/** SPEC §11: bulk import of ready `email|password` lists. */
+/**
+ * SPEC §17.4: bulk import of ready `email|password` lists. Each created account is
+ * immediately authenticated by a `login` job — a `pending` row alone is useless.
+ */
 export const POST = api(
   async (request) => {
     const input = await readJson(request, importSchema);
-    const { parsed, invalid } = parseLogins(input.text.split(/\r?\n/));
-    const skipped: string[] = [];
-    let created = 0;
-    for (const login of parsed) {
-      if (getAccountByEmailCI(login.email)) {
-        skipped.push(login.email);
-        continue;
-      }
-      try {
-        createAccount({
-          email: login.email,
-          passwordEnc: encrypt(login.password),
-          status: 'pending',
-          source: 'import',
-        });
-        created += 1;
-      } catch {
-        skipped.push(login.email);
-      }
+    const active = activeJobOfType('login');
+    if (active) {
+      throw new ApiError('job_running', 409, `Уже выполняется вход в аккаунты #${active.id}. Дождитесь завершения.`);
     }
-    logger.info('accounts', `import: created ${created}, skipped ${skipped.length}, invalid ${invalid.length}`);
-    return jsonBody({ created, skipped, invalid, total: parsed.length + invalid.length }, 201);
+    const notReady = await enginePreflightError();
+    if (notReady) throw new ApiError('engine_not_ready', 400, notReady);
+
+    const result = importAccounts(input.text);
+    if (result.jobId !== null) void runLoginJob(result.jobId).catch(() => undefined);
+    logger.info(
+      'accounts',
+      `import: created ${result.created}, skipped ${result.skipped.length}, invalid ${result.invalid.length}, login job ${result.jobId ?? '—'}`,
+    );
+    return jsonBody(result, 202);
   },
   { mutation: true },
 );
