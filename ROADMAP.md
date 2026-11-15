@@ -1,10 +1,10 @@
 # ROADMAP
 
-Статус: **M0–M8 готовы** — 5 живых аккаунтов, три протокола, стрим, слоты, рестарт, Claude Code 2.1.325 и Codex CLI 0.169.0 проверены на реальном апстриме; пул 20 аккаунтов, paid-баланс и Cline/Continue остаются ограничениями окружения (M8).
+Статус: **M0–M8 готовы** — 5 живых аккаунтов, три протокола, стрим, слоты, рестарт, Claude Code 2.1.325 и Codex CLI 0.169.0 проверены на реальном апстриме; UI переработан под ключи с квотой и показом, импорт аккаунтов, журнал запросов и объединённый «Обзор»; пул 20 аккаунтов, paid-баланс и Cline/Continue остаются ограничениями окружения (M8).
 
 Легенда: `[ ]` не начато, `[x]` готово, `[~]` в работе, `[!]` заблокировано внешним условием.
 
-Проверки на 2026-11-15: `npm run typecheck`, `npm run lint`, `npm run test` (104/104, 14 файлов, 13.1 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
+Проверки на 2026-11-15: `npm run typecheck`, `npm run lint`, `npm run test` (105/105, 14 файлов, 10.5 с), `npm run build` — зелёные; `npm run doctor` — все пункты `ok`; smoke на `http://127.0.0.1:3210`: `/healthz` 200, вход, `chrome_ok:true`, ключ, `/v1/models` (27), живые `chat/completions` + stream `[DONE]`, `responses`, `messages`, `count_tokens` — 200, CSP nonce, рестарт с сохранением данных; Claude Code 2.1.325 (`messages`) и Codex CLI 0.169.0 (`responses`) live exit 0; 3 аккаунта, 3 параллельных запроса, 50 запросов, TTFB в `requests.first_byte_ms` (см. M8).
 
 ---
 
@@ -149,7 +149,11 @@
 - [x] Обрыв клиента (B-025): живой прогон после фикса — `chat` и `messages` прерваны через `AbortController` после первого кадра; в `/api/requests` строки 113/114: `http_status=200`, `error_code=NULL`, `detail="client disconnected mid-stream"`, слоты возвращены, в логах `info client disconnected mid-stream`.
 - [x] B-026: `403 check_in_refused` от `/theos` больше не считается ошибкой авторизации — `classifyFailure` отдаёт временный `upstream_check_in_refused` (cooldown 2 мин, без `fail_count`), probe проверяет такой аккаунт чатом и возвращает `active`; аккаунты 1–3, ложно помеченные `dead`, восстановлены, пул 5/5 `active`
 - [x] Чистка репозитория: удалены `legacy/`, `bank.jsonl`, `accounts.txt`, `bank.example.jsonl`, `engine/{wave,redeem,probe}.py`, `__pycache__`, `shim*.log`; `.gitignore`, `eslint.config.mjs`, README и SPEC приведены в соответствие (ADR-020)
-- [x] Сохранность при рестарте: два production restart, все аккаунты (сейчас 5), jobs 4–15 и логи остались в SQLite; API-ключи хранятся хешами, отозванный ключ немедленно даёт 401.
+- [x] Ключи: показ полного ключа (`key_enc`, ADR-021), суммарная квота `token_limit` без выбора периода, `token_quota_exceeded` (429), физическое удаление вместо отзыва, RPM перенесён в «Настройки» как `gateway.rpm_limit` (ADR-022); сниппеты клиентов из UI убраны
+- [x] Аккаунты: полный email в таблице, панель добавления без продукта/прокси/headless, импорт готового списка `email|password` через `POST /api/accounts/import` (`created/skipped/invalid`)
+- [x] Логи: экран показывает только журнал запросов (`requests`) — время, ключ, аккаунт, маршрут `openai`/`responses`/`anthropic`, модель, токены, успех; фильтры и пагинация
+- [x] Обзор: экран «Статистика» удалён, агрегаты и серии перенесены на `/` (диапазоны `24 ч`/`7 д`/`30 д`); `GET /api/stats` остаётся источником данных
+- [x] Сохранность при рестарте: два production restart, все аккаунты (сейчас 5), jobs 4–15 и логи остались в SQLite; API-ключи хранятся хешем + `key_enc` (ADR-021), удалённый ключ немедленно даёт 401 (ADR-022).
 - [x] Smoke API-ключи (4–20) отозваны; живых ключей 0; реальные credentials/account cookies не печатались в smoke-вывод.
 - [x] Аудит секретов: `git status` чист от `data/`, `prof/`, `.env*`; ключи только хешем; логи редактируются
 - [x] Тег `v1.0.0` — принят владельцем запуск; пул вырос до 5 аккаунтов (jobs 12 и 14 по 1 логину), ограничения пула, Cline/Continue и реального upstream exhaustion перечислены выше.
@@ -162,4 +166,4 @@
 
 ## Открытые вопросы
 
-Нет. Все развилки закрыты в `docs/DECISIONS.md` (ADR-001…ADR-020); найденные баги и ограничения провайдера — в `docs/BUGS.md` (B-001…B-026).
+Нет. Все развилки закрыты в `docs/DECISIONS.md` (ADR-001…ADR-022); найденные баги и ограничения провайдера — в `docs/BUGS.md` (B-001…B-026).

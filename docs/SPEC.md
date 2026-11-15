@@ -79,13 +79,13 @@
 
 **S2. Настройка BM.** Настройки → поле «API-ключ BM» → «Проверить» → показывается баланс кошелька и имя продукта `id 578`. Ключ сохраняется зашифрованным.
 
-**S3. Закупка и регистрация.** Аккаунты → «Добавить аккаунты» → количество `20`, воркеров `2`, headless выключен → «Запустить». Показывается расчёт: `20 × $0.0166 ≈ $0.33`, остаток кошелька. Через 8–12 минут в таблице 17–18 активных аккаунтов, у каждого баланс 65 Theos, у 2–3 — статус `failed` с причиной (`GOOGLE_CAPTCHA`, `IAP`).
+**S3. Закупка и регистрация.** Аккаунты → «Добавить аккаунты» → количество `20`, воркеров `2` → «Запустить» (продукт BM, прокси и headless берутся из настроек). Показывается расчёт: `20 × $0.0166 ≈ $0.33`, остаток кошелька. Через 8–12 минут в таблице 17–18 активных аккаунтов, у каждого баланс 65 Theos, у 2–3 — статус `failed` с причиной (`GOOGLE_CAPTCHA`, `IAP`).
 
-**S4. Подключение IDE.** Ключи → «Создать ключ» → имя `claude-code` → ключ `hh-api-…` показывается один раз, копируется. Владелец вставляет `ANTHROPIC_BASE_URL=http://127.0.0.1:3210` и `ANTHROPIC_AUTH_TOKEN=hh-api-…` в `~/.claude/settings.json`. Claude Code работает.
+**S4. Подключение IDE.** Ключи → «Создать ключ» → имя `claude-code` → ключ `hh-api-…` показывается в модалке и остаётся доступным по кнопке «Показать» в любой момент. Владелец вставляет `ANTHROPIC_BASE_URL=http://127.0.0.1:3210` и `ANTHROPIC_AUTH_TOKEN=hh-api-…` в `~/.claude/settings.json`. Claude Code работает.
 
-**S5. Исчерпание лимита.** Аккаунт A отдаёт `429`/`insufficient`. Запрос автоматически уходит на аккаунт B; клиент получает `200` и не замечает переключения. В логах — запись `gateway warn: failover A→B (429)`. В статистике видно `attempts=2`.
+**S5. Исчерпание лимита.** Аккаунт A отдаёт `429`/`insufficient`. Запрос автоматически уходит на аккаунт B; клиент получает `200` и не замечает переключения. В логах — запись `gateway warn: failover A→B (429)`. В «Обзоре» видно `attempts=2`.
 
-**S6. Диагностика.** Логи → фильтр `level=error`, `scope=gateway` за 24 ч. Видно 3 ошибки `machine_required`, все вылечены ротацией machine-id. Статистика показывает p95 latency 1.8 с и 0.42 Theos за сутки.
+**S6. Диагностика.** Логи → журнал запросов за 24 ч с фильтром «ошибки». Видно 3 запроса с `machine_required` по аккаунту, все вылечены ротацией machine-id (проверяется через `/api/logs` и `docs/BUGS.md`). «Обзор» показывает p95 latency 1.8 с и 0.42 Theos за сутки.
 
 ---
 
@@ -119,7 +119,7 @@ OAuth-контур провайдера отлажен в `oauth.py` (после
 ### 5.3 Поток запроса шлюза
 
 1. Аутентификация ключа (`Authorization: Bearer`, `x-api-key`, `api-key`) → `api_keys` по SHA-256 с перцем.
-2. Rate limit ключа (token bucket, `rpm_limit`).
+2. Квота ключа (`token_limit`, суммарно за всё время) и общий rate limit шлюза (token bucket, `gateway.rpm_limit`).
 3. Валидация тела (Zod по протоколу) → нормализация в `ChatRequest`.
 4. Выбор аккаунта под модель (free/paid, статус, кулдаун, слот).
 5. Вызов апстрима с lane/machine/beacon/instance-заголовками.
@@ -292,13 +292,13 @@ CREATE INDEX idx_balance_account_ts ON balance_samples(account_id, ts);
 CREATE TABLE api_keys (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   name         TEXT NOT NULL,
-  prefix       TEXT NOT NULL,             -- hh-api-ab12cd34
+  prefix       TEXT NOT NULL,             -- hh-api-ab12cd
   last4        TEXT NOT NULL,
   key_hash     TEXT NOT NULL UNIQUE,      -- sha256(pepper || key)
-  rpm_limit    INTEGER NOT NULL DEFAULT 60,
+  key_enc      TEXT,                      -- AES-256-GCM полного ключа (ADR-021)
+  token_limit  INTEGER,                   -- суммарная квота за всё время, NULL = без лимита
   created_at   INTEGER NOT NULL,
-  last_used_at INTEGER,
-  revoked_at   INTEGER
+  last_used_at INTEGER
 );
 
 CREATE TABLE models (
@@ -336,6 +336,7 @@ CREATE TABLE requests (
 );
 CREATE INDEX idx_requests_ts ON requests(ts DESC);
 CREATE INDEX idx_requests_model_ts ON requests(model, ts DESC);
+CREATE INDEX idx_requests_key ON requests(api_key_id);
 
 CREATE TABLE logs (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -447,6 +448,7 @@ HH_MEASURE_THEOS=0
 | `engine.restart_after` | int | `10` | перезапуск Python-воркера после N аккаунтов |
 | `balance.sync_interval_min` | int | `5` | период фоновой проверки баланса |
 | `gateway.default_model` | string | `glm-5.3-flash` | модель при `model` вне каталога и в `count_tokens` |
+| `gateway.rpm_limit` | int | `60` | общий лимит запросов в минуту для всех ключей (1–6000) |
 | `gateway.expose_disabled` | bool | `0` | отдавать ли выключенные модели в `/v1/models` |
 | `responses.ttl_days` | int | `7` | срок хранения Responses |
 
@@ -464,6 +466,7 @@ HH_MEASURE_THEOS=0
 | GET | `/api/overview` | счётчики, баланс, последние ошибки |
 | GET | `/api/accounts` | `?status=&q=&page=&per=50` |
 | POST | `/api/accounts` | `{email,password}` — ручное добавление |
+| POST | `/api/accounts/import` | `{text}` → `{created,skipped[],invalid[],total}` — пакетный импорт `email\|password` |
 | PATCH | `/api/accounts/:id` | `{status:"disabled"\|"active"}` |
 | DELETE | `/api/accounts/:id` | удаление вместе с cookies |
 | POST | `/api/accounts/:id/check` | проверка баланса одного |
@@ -471,14 +474,15 @@ HH_MEASURE_THEOS=0
 | POST | `/api/jobs` | `{type:"provision",quantity,productId?,workers?,headless?,proxy?}` → `{jobId}` |
 | GET | `/api/jobs/:id` | прогресс + items |
 | POST | `/api/jobs/:id/cancel` | отмена: `cancelled` сразу, in-flight регистрация прерывается, item возвращается в `purchased` (ADR-018) |
-| GET | `/api/keys` | список без секретов |
-| POST | `/api/keys` | `{name,rpmLimit}` → `{key:"hh-api-…"}` (единственный раз) |
-| DELETE | `/api/keys/:id` | отзыв (`revoked_at`) |
+| GET | `/api/keys` | список: имя, префикс, `token_limit`, создан, последний запрос |
+| POST | `/api/keys` | `{name,tokenLimit?}` → `{key:"hh-api-…",record}`; `tokenLimit=null` — без лимита |
+| GET | `/api/keys/:id` | `{key,record}` — расшифрованный ключ (ADR-021); 409 `key_not_revealable` для ключей без `key_enc` |
+| DELETE | `/api/keys/:id` | удаление ключа навсегда (ADR-022) |
 | GET | `/api/models` | каталог из БД |
 | POST | `/api/models/sync` | синхронизация из провайдера |
 | PATCH | `/api/models/:id` | `{enabled:boolean}` |
 | GET | `/api/logs` | `?level=&scope=&accountId=&q=&before=&per=100` |
-| GET | `/api/requests` | `?model=&status=&from=&to=&page=` |
+| GET | `/api/requests` | `?model=&status=ok\|error&endpoint=&keyId=&accountId=&from=&to=&page=&per=` → `{rows,total,page,per}`; в строках `keyName`, `accountEmail` |
 | GET | `/api/stats` | `?range=24h\|7d\|30d` |
 | GET | `/api/settings` | значения; 🔒-поля маскируются `sk_live_…ab12` |
 | PUT | `/api/settings` | частичное обновление; пустая строка для 🔒 = «не менять» |
@@ -511,14 +515,15 @@ HH_MEASURE_THEOS=0
 2. `x-api-key: hh-api-…` (Anthropic)
 3. `api-key: hh-api-…` (Azure-стиль)
 
-Формат ключа: `hh-api-` + 48 символов `[A-Za-z0-9]`, генерируется из 32 случайных байт (`crypto.randomBytes(32).toString('base64url')` без `-`/`_` → в base62-алфавит, 48 символов). В БД — только `sha256(pepper || key)`; сравнение `timingSafeEqual`. Отображение: `hh-api-a1b2c3d4…wxyz` (`prefix` = первые 12 символов, `last4`).
+Формат ключа: `hh-api-` + 48 символов `[A-Za-z0-9]`, генерируется из 32 случайных байт (`crypto.randomBytes(32).toString('base64url')` без `-`/`_` → в base62-алфавит, 48 символов). В БД — `sha256(pepper || key)` для проверки (сравнение `timingSafeEqual`) и `key_enc` (AES-256-GCM) для показа владельцу по кнопке «Показать» (ADR-021). Отображение: `hh-api-a1b2c3d…wxyz` (`prefix` = первые 12 символов, `last4`). Удаление ключа — физическое удаление строки; запросы с ним сразу получают 401.
 
 Ошибки аутентификации:
 
 | Условие | HTTP | Тело (OpenAI) | Тело (Anthropic) |
 |---|---|---|---|
 | нет ключа | 401 | `{"error":{"message":"Missing API key","type":"invalid_request_error","code":"missing_api_key"}}` | `{"type":"error","error":{"type":"authentication_error","message":"Missing API key"}}` |
-| ключ неверен/отозван | 401 | `... "type":"invalid_request_error","code":"invalid_api_key"` | `... "type":"authentication_error","message":"Invalid API key"` |
+| ключ неверен или удалён | 401 | `... "type":"invalid_request_error","code":"invalid_api_key"` | `... "type":"authentication_error","message":"Invalid API key"` |
+| исчерпана квота токенов ключа | 429 | `... "type":"rate_limit_error","code":"token_quota_exceeded"` | `... "type":"rate_limit_error"` |
 | rpm превышен | 429 | `... "type":"rate_limit_error","code":"rate_limit_exceeded"` + `Retry-After` | `... "type":"rate_limit_error"` |
 | нет аккаунтов | 429 | `... "type":"rate_limit_error","code":"no_account_available"` + `Retry-After: 30` | то же |
 
@@ -891,17 +896,17 @@ Paid (16): `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-fable-5-2`, `gpt-6.1-
 
 ## 20. Логи и статистика
 
-### 20.1 Логи
+### 20.1 Логи запросов (экран «Логи»)
 
-Пишутся в stdout (для терминала) и в `logs`. Поля: `ts`, `level`, `scope`, `message`, `account_id?`, `request_id?`, `meta` (JSON, ≤ 2 КБ). Уровни: `debug` (только при `HH_LOG_LEVEL=debug`), `info`, `warn`, `error`.
+Экран `/logs` показывает только журнал запросов шлюза из `requests` — по строке на запрос: время, имя ключа (`keyName`), email аккаунта (`accountEmail`), маршрут (`openai` = `chat`/`count_tokens`, `responses`, `anthropic`), модель, суммарные токены, успех (HTTP < 400 без `errorCode`). Фильтры: маршрут, ключ, результат (`успешные`/`ошибки`), модель; пагинация по 50, автообновление 5 с (тумблер).
 
-Обязательные события: старт/стоп приложения, миграции, синхронизация моделей, проверка баланса (агрегированно), каждый failover (`warn`), каждая фатальная ошибка шлюза (`error`), стадии джобы (`info`), ошибка BM (`error`).
+Технические логи (`logs`) по-прежнему пишутся в stdout и в таблицу `logs`: поля `ts`, `level`, `scope`, `message`, `account_id?`, `request_id?`, `meta` (JSON, ≤ 2 КБ). Уровни: `debug` (только при `HH_LOG_LEVEL=debug`), `info`, `warn`, `error`. Обязательные события: старт/стоп приложения, миграции, синхронизация моделей, проверка баланса (агрегированно), каждый failover (`warn`), каждая фатальная ошибка шлюза (`error`), стадии джобы (`info`), ошибка BM (`error`). `GET /api/logs` (фильтры `level`, `scope`, `accountId`, `q`, `before`, `per`) и `DELETE /api/logs` остаются для диагностики и очистки из настроек.
 
 Редактирование секретов: значения полей `password`, `cookies`, `authorization`, `x-api-key`, `api_key`, `sessionid`, `csrftoken` заменяются на `«redacted»` рекурсивно до сериализации (`src/lib/redact.ts`).
 
-UI `/logs`: фильтры `level`, `scope`, `account`, полнотекстовый `q` (LIKE), пагинация по `before=id`, автообновление 2 с (тумблер), «Копировать JSON», подсветка `error` красным, `warn` янтарным.
+### 20.2 Статистика (внутри «Обзора»)
 
-### 20.2 Статистика
+Отдельного экрана нет: агрегаты вынесены на `/` под селектором диапазона `24 ч`/`7 д`/`30 д`.
 
 `GET /api/stats?range=24h|7d|30d`:
 
@@ -928,18 +933,17 @@ UI `/logs`: фильтры `level`, `scope`, `account`, полнотекстов
 
 Дизайн-система — `docs/DESIGN.md`. Кратко: тёмная тема, фон `#0A0A0A`, панели `#111111`, границы `#1F1F1F`, акцент лайм `#C6FF3D`, текст `#EDEDED`, приглушённый `#8A8A8A`. Радиус 10 px, границы 1 px, без теней и градиентов. Числа и ключи — моноширинный шрифт.
 
-Каркас: сайдбар 240 px (лого `hh-api`, пункты: Обзор, Аккаунты, Ключи, Модели, Логи, Статистика, Настройки; внизу индикатор «шлюз работает»), контент — max-width 1280 px, шапка с заголовком страницы и действиями.
+Каркас: сайдбар 240 px (лого `hh-api`, пункты: Обзор, Аккаунты, Ключи, Модели, Логи, Настройки; внизу индикатор «шлюз работает»), контент — max-width 1280 px, шапка с заголовком страницы и действиями. Статистика отдельного пункта не имеет — она встроена в «Обзор».
 
 Экраны:
 
 1. **Вход** — центрированная карточка 360 px, поле пароля, ошибка под полем.
-2. **Обзор** — 4 карточки (активные аккаунты, суммарный баланс, запросы 24 ч, доля ошибок), график запросов, список последних ошибок, быстрые действия («Добавить аккаунты», «Создать ключ», «Синхронизировать модели»).
-3. **Аккаунты** — таблица: email (маска), статус (бейдж), баланс, `refresh_at` (относительное время), последний запрос, действия (проверить, отключить, удалить). Фильтры-чипы по статусу, поиск. Строка `cooldown` показывает таймер. Кнопка «Добавить аккаунты» открывает панель: количество, продукт, воркеры, headless, прокси, оценка стоимости, кнопка «Купить и зарегистрировать». Прогресс — таблица items со стадиями и счётчиком `ok/failed`, кнопка «Отменить».
-4. **Ключи** — таблица (имя, префикс, создан, последний запрос, rpm, отозвать), модалка создания, после создания — блок с полным ключом, кнопка «Скопировать» и готовые сниппеты для Claude Code, Codex CLI, Cline, OpenAI SDK.
+2. **Обзор** — карточки (активные аккаунты, суммарный баланс, запросы, ошибки, токены, потрачено Theos за выбранный диапазон), селектор `24 ч`/`7 д`/`30 д`, график запросов и ошибок с p50/p95/p99, столбцы ошибок, топ ошибок, таблицы по моделям и аккаунтам, список последних ошибок, быстрые действия («Добавить аккаунты», «Создать ключ», «Синхронизировать модели»).
+3. **Аккаунты** — таблица: полный email, статус (бейдж), баланс, `refresh_at` (относительное время), последний запрос, действия (проверить, отключить, удалить). Фильтры-чипы по статусу, поиск. Кнопка «Добавить аккаунты» открывает панель: количество и воркеры, оценка стоимости, кнопка «Купить и зарегистрировать»; продукт BM, прокси и headless берутся из настроек. Кнопка «Импорт» принимает готовый список `email|password` (построчно) и показывает `created/skipped/invalid`. Прогресс — таблица items со стадиями и счётчиком `ok/failed`, кнопка «Отменить».
+4. **Ключи** — таблица (имя, префикс…last4, лимит токенов, создан, последний запрос, действия «Показать»/«Удалить»), модалка создания (имя + необязательный суммарный лимит токенов), просмотр полного ключа в модалке с кнопкой «Скопировать», подтверждение необратимого удаления. Готовых сниппетов для клиентов на экране нет: подключение описано в README.
 5. **Модели** — две группы (Free / Paid), колонки: id, контекст, max output, модальности, статус, тумблер «Доступна в API», кнопка «Синхронизировать», время последней синхронизации.
-6. **Логи** — панель фильтров, виртуализированный список (окно 200 строк), моноширинный текст, бейдж уровня.
-7. **Статистика** — селектор диапазона, карточки, график, таблицы по моделям и аккаунтам.
-8. **Настройки** — секции: BM (ключ, продукт, «Проверить»), Движок (воркеры, headless, прокси, перезапуск), Баланс (интервал), Шлюз (модель по умолчанию, TTL Responses), Данные (ретеншн, экспорт аккаунтов, очистка логов), Безопасность (смена пароля).
+6. **Логи** — журнал запросов: время, ключ, аккаунт, маршрут, модель, токены, успех/код ошибки; фильтры маршрута, ключа, результата и модели, пагинация, автообновление 5 с.
+7. **Настройки** — секции: BM (ключ, продукт, «Проверить»), Движок (воркеры, headless, прокси, перезапуск), Баланс (интервал), Шлюз (модель по умолчанию, лимит запросов RPM, TTL Responses), Данные (ретеншн, экспорт аккаунтов, очистка логов), Безопасность (смена пароля).
 
 Состояния: скелетоны при загрузке, пустые состояния с одним действием, ошибки — inline-панель с текстом и кнопкой «Повторить». Все мутации — оптимистичное обновление с откатом при ошибке. Тосты — правый нижний угол, 4 с.
 
@@ -952,8 +956,8 @@ UI `/logs`: фильтры `level`, `scope`, `account`, полнотекстов
 1. **Сеть.** `server.listen(port, '127.0.0.1')`; `HH_ALLOW_REMOTE=1` требует явного подтверждения в UI и печатает предупреждение. Никаких CORS-заголовков: браузерные клиенты с других origin получают отказ.
 2. **Сессия UI.** Cookie `hh_session` = `base64url(payload).hmac`, payload `{sub:"admin",iat,exp}`; `HttpOnly`, `SameSite=Lax`, `Path=/`, без `Secure` (localhost). Сравнение HMAC — `timingSafeEqual`. Пароль хранится как scrypt-хеш в `.env.local` (или в `settings.admin_password_hash`, если задан через UI).
 3. **Шифрование.** AES-256-GCM, ключ = scrypt(`HH_SECRET`, `"hh-api-v1"`, 32, N=2^15, r=8, p=1). Формат `v1.<iv_b64>.<tag_b64>.<ct_b64>`. Шифруются: `bm.api_key`, `accounts.password_enc`, `accounts.cookies_enc`, `settings` с `encrypted=1`.
-4. **HH-ключи.** Хранится только `sha256(pepper || key)`, `pepper = scrypt(HH_SECRET,"hh-api-pepper",32)`. Полный ключ показывается один раз. Отзыв — `revoked_at`, проверка на каждом запросе.
-5. **Rate limit.** Token bucket на ключ: `rpm_limit` (по умолчанию 60), окно 60 с, состояние в памяти, сброс при рестарте. Превышение — 429 с `Retry-After`.
+4. **HH-ключи.** Проверка — `sha256(pepper || key)`, `pepper = scrypt(HH_SECRET,"hh-api-pepper",32)`, сравнение `timingSafeEqual`. Полный ключ хранится дополнительно в `key_enc` (AES-256-GCM, ADR-021) и доступен владельцу по кнопке «Показать»; в списках и логах — только `prefix`/`last4`. Удаление ключа — физическое удаление строки (`DELETE /api/keys/:id`), запросы с ним сразу получают 401 (ADR-022).
+5. **Rate limit.** Token bucket на процесс: `gateway.rpm_limit` (по умолчанию 60, настраивается в «Настройках» → Шлюз), окно 60 с, состояние в памяти, сброс при рестарте. Лимит общий для всех ключей; превышение — 429 с `Retry-After`. Поверх него — суммарная квота токенов ключа `token_limit` (проверяется до bucket).
 6. **CSRF.** Мутации `/api/*` принимают только `POST/PUT/PATCH/DELETE` с `Origin`, равным `http://127.0.0.1:<port>`, либо без `Origin` (curl). Отсутствие/несовпадение — 403 `csrf_failed`.
 7. **Заголовки.** `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, CSP `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'`.
 8. **Логи.** Только через `logger`, который прогоняет `redact`. Прямой `console.log` в `src/` и `app/` запрещён (правило ESLint `no-console`, исключение — `scripts/`).
@@ -1014,7 +1018,7 @@ HH_SECRET set           ok
 
 Отсутствие Python/playwright/Chrome — предупреждение: шлюз работает, регистрация недоступна (кнопка «Добавить аккаунты» блокируется с пояснением).
 
-Готовые скрипты клиентов (показываются в UI при создании ключа):
+Готовые скрипты клиентов (в README; в UI при создании ключа не показываются):
 
 ```powershell
 # Claude Code
@@ -1043,7 +1047,7 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 ### 25.1 Юнит-тесты (Vitest)
 
 - `crypto`: round-trip AES-GCM, неверный тег → ошибка, детерминизм ключа из `HH_SECRET`.
-- `keys`: формат `^hh-api-[A-Za-z0-9]{48}$`, хеш, `timingSafeEqual`, отзыв.
+- `keys`: формат `^hh-api-[A-Za-z0-9]{48}$`, хеш, `timingSafeEqual`, шифрование для показа (`key_enc`), суммарная квота `token_limit`, физическое удаление.
 - `normalize`: 13 фикстур (chat/responses/messages, текст, изображение, tool_use/tool_result, system-блоки, Claude Code `role:"system"` в `messages`).
 - `render-anthropic`: порядок событий стрима, `stop_reason`, `input_json_delta`.
 - `render-responses`: `previous_response_id`, `store:false`, `function_call`.
@@ -1067,26 +1071,30 @@ Cline/Roo/Continue/Zed/Aider — base URL `http://127.0.0.1:3210/v1`, ключ `
 7. Anthropic `/v1/messages` стрим → точный порядок событий, нет `[DONE]`.
 8. Responses стрим → `response.completed` с usage; `previous_response_id` возвращает историю.
 9. Клиент оборвал соединение → апстрим aborted, слот свободен в течение 1 с.
-10. Ключ отозван → 401.
+10. Ключ удалён → 401.
 11. `/v1/models` содержит только enabled.
 12. Параллельно 20 стримов на 4 аккаунтах → все 200, `queued` не превышает лимит, слоты возвращены.
 
 ### 25.3 Приёмка
 
 - [x] `npm run build` — 0 ошибок, 0 предупреждений TS (принятые Turbopack-предупреждения — B-017).
-- [x] `npm run test` — все сценарии §25.1–25.2 зелёные: 100 тестов, 13 файлов.
+- [x] `npm run test` — все сценарии §25.1–§25.2 зелёные: 105 тестов, 14 файлов.
 - [x] `npm run doctor` — все пункты `ok` (при остановленном сервере; при запущенном порт 3210 законно занят).
 - [x] Реальная закупка 1 логина и регистрация 1 аккаунта: статус `active`; баланс `0` Theos вместо 65 — ограничение провайдера B-022.
 - [x] Реальная проверка баланса: `POST /api/accounts/check-all` → job `probe` (10 и 11), все `ok`; после докупки аккаунтов 4–5 cron `balance sync: 5/5 ok`, цифры совпадают с `/api/accounts` (ADR-019).
 - [x] Claude Code 2.1.325: `claude -p "hi" --model glm-5.3-flash --output-format text` через `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` → exit 0, ответ; `/api/requests` — `endpoint=messages`, 200, stream. Первоначально live-прогон выявил B-024 (`messages[].role=system`), после фикса повторный прогон прошёл.
 - [x] Codex CLI 0.169.0: `codex exec --skip-git-repo-check hi` с `CODEX_HOME/config.toml` (`wire_api="responses"`, `base_url=http://127.0.0.1:3210/v1`) → exit 0, ответ; `/api/requests` — `endpoint=responses`, 200, stream.
 - [!] Cline/Continue: обычный чат и стрим → ответ. Заблокировано: расширения не установлены; чат и стрим проверены curl-эквивалентом.
-- [!] Искусственное исчерпание (аккаунт с `balance=0`) → переключение, в статистике `attempts=2`. Заблокировано B-022: у всех аккаунтов `balance=0`, поэтому paid-модель отсекается выбором аккаунта (429, `attempts=0`); failover на `insufficient` покрыт моками.
+- [!] Искусственное исчерпание (аккаунт с `balance=0`) → переключение, в «Обзоре» `attempts=2`. Заблокировано B-022: у всех аккаунтов `balance=0`, поэтому paid-модель отсекается выбором аккаунта (429, `attempts=0`); failover на `insufficient` покрыт моками.
 - [x] Перезапуск приложения: ключи, аккаунты, логи на месте (jobs 4–15, 5 аккаунтов после двух рестартов); активные джобы помечаются `failed` с причиной `restart` (`failStaleJobs`, тест в `tests/unit/jobs.test.ts`).
-- [x] Отзыв ключа немедленно даёт 401: живой запрос отозванным `hh-api-…` → 401 `invalid_api_key`.
+- [x] Удаление ключа немедленно даёт 401: живой запрос удалённым `hh-api-…` → 401 `invalid_api_key`.
 - [x] Обрыв клиента на стриме (B-025): после фикса `chat` и `messages`, прерванные `AbortController` после первого кадра, дают по одной строке в `requests` с `http_status=200`, `error_code=NULL`, `detail="client disconnected mid-stream"`; `stream_error`/502 остаётся только для разрыва апстрима (тест 6).
 - [!] Пул 20 аккаунтов и сценарий §25.2.12 (20 стримов на 4 аккаунтах): на момент приёмки 5 аккаунтов из 20; прогон на доступном пуле — 50 запросов с шагом 150 мс, 43×200 / 7×429 по штатному ожиданию слота (M8).
 - [x] В `git status` нет `data/`, `prof/`, `.env.local`.
+- [x] Ключи: создание с лимитом токенов и без него, «Показать» возвращает полный ключ из `key_enc`, «Удалить» стирает строку (`requests.api_key_id` → `NULL`), запрос с удалённым ключом → 401; превышение `token_limit` → 429 `token_quota_exceeded` (смок на `127.0.0.1:3210`).
+- [x] Аккаунты: полный email в таблице, панель добавления без продукта/прокси/headless, импорт списка `email|password` → `created/skipped/invalid`.
+- [x] Логи: журнал запросов с ключом, аккаунтом, маршрутом и токенами; фильтры маршрута/ключа/результата/модели работают на `requests`.
+- [x] Обзор: агрегаты статистики (карточки, диапазоны `24 ч`/`7 д`/`30 д`, график, топ ошибок, таблицы) на `/`; пункт «Статистика» из навигации удалён.
 
 ---
 
