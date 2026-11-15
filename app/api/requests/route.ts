@@ -9,6 +9,9 @@ export const GET = api(async (request) => {
   const result = queryRequests({
     model: strParam(url.searchParams, 'model'),
     status: strParam(url.searchParams, 'status'),
+    endpoint: strParam(url.searchParams, 'endpoint'),
+    keyId: intParam(url.searchParams, 'keyId'),
+    accountId: intParam(url.searchParams, 'accountId'),
     from: intParam(url.searchParams, 'from'),
     to: intParam(url.searchParams, 'to'),
     page: intParam(url.searchParams, 'page') ?? 1,

@@ -32,6 +32,14 @@ export function fmtTokens(value: number | null | undefined): string {
   return String(Math.round(value));
 }
 
+/** Route label shown in the request log: one of the three public protocols. */
+export function fmtRoute(endpoint: string): string {
+  if (endpoint === 'chat' || endpoint === 'count_tokens') return 'openai';
+  if (endpoint === 'responses') return 'responses';
+  if (endpoint === 'messages') return 'anthropic';
+  return endpoint;
+}
+
 export function fmtMs(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return '—';
   if (value < 1_000) return `${Math.round(value)} мс`;
