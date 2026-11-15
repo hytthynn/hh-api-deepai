@@ -2,6 +2,7 @@ export type GatewayErrorCode =
   | 'missing_api_key'
   | 'invalid_api_key'
   | 'rate_limit_exceeded'
+  | 'token_quota_exceeded'
   | 'no_account_available'
   | 'model_not_found'
   | 'unsupported_parameter'

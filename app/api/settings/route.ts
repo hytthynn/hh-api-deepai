@@ -54,6 +54,7 @@ const putSchema = z.object({
   'engine.restart_after': z.number().int().min(1).max(1000).optional(),
   'balance.sync_interval_min': z.number().int().min(1).max(1440).optional(),
   'gateway.default_model': z.string().trim().min(1).max(120).optional(),
+  'gateway.rpm_limit': z.number().int().min(1).max(6000).optional(),
   'gateway.expose_disabled': z.boolean().optional(),
   'responses.ttl_days': z.number().int().min(1).max(365).optional(),
   'admin.password': z.string().min(8, 'Пароль минимум 8 символов').max(200).optional(),
@@ -99,6 +100,7 @@ export const PUT = api(
       ['engine.restart_after', input['engine.restart_after']],
       ['balance.sync_interval_min', input['balance.sync_interval_min']],
       ['gateway.default_model', input['gateway.default_model']],
+      ['gateway.rpm_limit', input['gateway.rpm_limit']],
       ['gateway.expose_disabled', input['gateway.expose_disabled']],
       ['responses.ttl_days', input['responses.ttl_days']],
     ];

@@ -74,6 +74,7 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   'engine.restart_after': '10',
   'balance.sync_interval_min': '5',
   'gateway.default_model': 'glm-5.3-flash',
+  'gateway.rpm_limit': '60',
   'gateway.expose_disabled': '0',
   'responses.ttl_days': '7',
 };

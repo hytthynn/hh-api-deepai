@@ -8,10 +8,12 @@ import { hasImageContent, type ChatRequest } from '@/src/core/gateway/types';
 import type { RequestFilter } from '@/src/adapters/db/repositories/requests';
 import { insertRequest, queryRequests } from '@/src/adapters/db/repositories/requests';
 import { getModel, listModels } from '@/src/adapters/db/repositories/models';
-import { getBool, getSetting } from '@/src/adapters/db/repositories/settings';
+import { getBool, getInt, getSetting } from '@/src/adapters/db/repositories/settings';
+import { tokensUsedByKey } from '@/src/adapters/db/repositories/requests';
 import { consumeToken } from '@/src/lib/rate-limit';
 import { logger } from '@/src/lib/logger';
 import { requestId } from '@/src/lib/ids';
+import { env } from '@/src/lib/config';
 import { errorResponse, metaHeaders, type ErrorProtocol } from './http';
 import { authenticateRequest } from './auth';
 
@@ -35,9 +37,18 @@ export function begin(request: Request, endpoint: Endpoint, protocol: ErrorProto
         : new GatewayError('invalid_api_key', 401, 'Invalid API key');
     return { ok: false, response: errorResponse(error, protocol, { requestId: id, attempts: 0 }) };
   }
-  const limit = consumeToken(auth.key.id, auth.key.rpmLimit);
+  const quota = auth.key.tokenLimit;
+  if (quota !== null) {
+    const used = tokensUsedByKey(auth.key.id);
+    if (used >= quota) {
+      const error = new GatewayError('token_quota_exceeded', 429, `Token quota exhausted (${used}/${quota} tokens)`);
+      return { ok: false, response: errorResponse(error, protocol, { requestId: id, attempts: 0 }) };
+    }
+  }
+  const rpm = getInt('gateway.rpm_limit', env.defaultRpm);
+  const limit = consumeToken(auth.key.id, rpm);
   if (!limit.ok) {
-    const error = new GatewayError('rate_limit_exceeded', 429, `Rate limit exceeded (${auth.key.rpmLimit} rpm)`, {
+    const error = new GatewayError('rate_limit_exceeded', 429, `Rate limit exceeded (${rpm} rpm)`, {
       retryAfterSec: limit.retryAfterSec,
     });
     return { ok: false, response: errorResponse(error, protocol, { requestId: id, attempts: 0 }) };

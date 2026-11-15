@@ -8,7 +8,7 @@ vi.mock('@/src/adapters/upstream/headers', async (importOriginal) => {
 import { closeDb } from '@/src/adapters/db/client';
 import { runMigrations } from '@/src/adapters/db/migrate';
 import { createAccount, getAccount, updateAccount } from '@/src/adapters/db/repositories/accounts';
-import { createKey, revokeKey } from '@/src/adapters/db/repositories/keys';
+import { createKey, deleteKey } from '@/src/adapters/db/repositories/keys';
 import { setModelEnabled } from '@/src/adapters/db/repositories/models';
 import { queryRequests } from '@/src/adapters/db/repositories/requests';
 import { serializeCookies } from '@/src/adapters/upstream/cookies';
@@ -72,7 +72,6 @@ function seedKey(): string {
     prefix: key.slice(0, 11),
     last4: key.slice(-4),
     keyHash: hashApiKey(key),
-    rpmLimit: 10_000,
   });
   return key;
 }
@@ -419,7 +418,7 @@ describe('SPEC §25.2 integration: streaming', () => {
 });
 
 describe('SPEC §25.2 integration: auth, models and concurrency', () => {
-  it('10. a revoked key is rejected with 401', async () => {
+  it('10. a deleted key is rejected with 401', async () => {
     seedAccount('revoked@example.test', { lastUsedAt: 1_000 });
     const key = seedKey();
     const response = await post('/v1/chat/completions', key, {
@@ -430,7 +429,7 @@ describe('SPEC §25.2 integration: auth, models and concurrency', () => {
 
     const { listKeys } = await import('@/src/adapters/db/repositories/keys');
     const id = listKeys()[0]!.id;
-    expect(revokeKey(id)).toBe(true);
+    expect(deleteKey(id)).toBe(true);
 
     const denied = await post('/v1/chat/completions', key, {
       model: FREE_MODEL,
