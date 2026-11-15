@@ -6,13 +6,14 @@ import { fmtAgo, fmtDateTime, fmtInt, fmtTheos, fmtUntil } from '../format';
 import { Icon } from '../icons';
 import { Page } from '../shell';
 import { useToast } from '../toast';
-import { Button, EmptyState, ErrorPanel, Field, Modal, Progress, Skeleton, StatusBadge, Switch } from '../ui';
+import { Button, EmptyState, ErrorPanel, Field, Modal, Progress, Skeleton, StatusBadge } from '../ui';
 import { useApi, useNow } from '../use-api';
 import type {
   AccountPublic,
   AccountsResponse,
   BmTestResponse,
   EngineResponse,
+  ImportResponse,
   Job,
   JobResponse,
   JobsListResponse,
@@ -46,6 +47,7 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [provisionOpen, setProvisionOpen] = useState(initialProvision);
+  const [importOpen, setImportOpen] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<AccountPublic | null>(null);
   const now = useNow(1_000);
@@ -156,6 +158,10 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
             <Icon name="check" size={14} />
             Проверить все
           </Button>
+          <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+            <Icon name="plus" size={14} />
+            Импорт
+          </Button>
           <Button variant="primary" size="sm" onClick={() => setProvisionOpen(true)} disabled={!chromeOk}>
             <Icon name="plus" size={14} />
             Добавить аккаунты
@@ -211,7 +217,7 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
         ) : rows.length === 0 ? (
           <EmptyState
             title="Аккаунтов нет"
-            hint={query ? 'Ничего не найдено по этому запросу.' : 'Купите логины в BM и зарегистрируйте аккаунты.'}
+            hint={query ? 'Ничего не найдено по этому запросу.' : 'Купите логины в BM, импортируйте готовый список или добавьте вручную.'}
             action={
               <Button variant="primary" size="sm" onClick={() => setProvisionOpen(true)} disabled={!chromeOk}>
                 Добавить аккаунты
@@ -234,7 +240,7 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
               {rows.map((account) => (
                 <tr key={account.id}>
                   <td>
-                    <div className="mono">{account.maskedEmail}</div>
+                    <div className="mono">{account.email}</div>
                     <div className="small faint">
                       #{account.id} · {account.source}
                       {account.bmOrderId ? ` · order ${account.bmOrderId}` : ''}
@@ -314,6 +320,15 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
         />
       ) : null}
 
+      {importOpen ? (
+        <ImportModal
+          onClose={() => {
+            setImportOpen(false);
+            accounts.reload();
+          }}
+        />
+      ) : null}
+
       {deleting ? (
         <Modal
           title="Удалить аккаунт"
@@ -330,12 +345,132 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
           }
         >
           <div className="small">
-            Аккаунт <span className="mono">{deleting.maskedEmail}</span> будет удалён вместе с cookies и паролем.
+            Аккаунт <span className="mono">{deleting.email}</span> будет удалён вместе с cookies и паролем.
             Действие необратимо.
           </div>
         </Modal>
       ) : null}
     </Page>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Import                                                              */
+/* ------------------------------------------------------------------ */
+
+function ImportModal({ onClose }: { onClose: () => void }) {
+  const toast = useToast();
+  const [text, setText] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ImportResponse | null>(null);
+
+  const submit = async (): Promise<void> => {
+    if (text.trim().length === 0) {
+      setError('Вставьте хотя бы одну строку');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = await apiSend<ImportResponse>('/api/accounts/import', 'POST', { text });
+      setResult(payload);
+      toast.success(`Импортировано: ${payload.created}`);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Импорт аккаунтов"
+      onClose={onClose}
+      wide
+      footer={
+        result ? (
+          <Button variant="primary" onClick={onClose}>
+            Готово
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose}>
+              Отмена
+            </Button>
+            <Button variant="primary" loading={loading} onClick={() => void submit()}>
+              Импортировать
+            </Button>
+          </>
+        )
+      }
+    >
+      {result ? (
+        <div className="stack-12">
+          <div className="row small">
+            <span className="muted">Создано</span>
+            <span className="spacer" />
+            <span className="mono">{fmtInt(result.created)}</span>
+          </div>
+          <div className="row small">
+            <span className="muted">Пропущено (уже есть)</span>
+            <span className="spacer" />
+            <span className="mono">{fmtInt(result.skipped.length)}</span>
+          </div>
+          <div className="row small">
+            <span className="muted">Некорректных строк</span>
+            <span className="spacer" />
+            <span className="mono">{fmtInt(result.invalid.length)}</span>
+          </div>
+          {result.skipped.length > 0 || result.invalid.length > 0 ? (
+            <div className="table-wrap" style={{ maxHeight: 240, overflow: 'auto' }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Строка</th>
+                    <th>Причина</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.skipped.map((email) => (
+                    <tr key={`skipped-${email}`}>
+                      <td className="mono small">{email}</td>
+                      <td className="small faint">уже существует</td>
+                    </tr>
+                  ))}
+                  {result.invalid.map((line) => (
+                    <tr key={`invalid-${line}`}>
+                      <td className="mono small">{line}</td>
+                      <td className="small faint">не email|пароль</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <Field
+          label="Список логинов"
+          htmlFor="import-text"
+          hint="email|password или email:password, по одному на строку; дубликаты пропускаются"
+          error={error}
+        >
+          <textarea
+            id="import-text"
+            className={`input mono${error ? ' invalid' : ''}`}
+            rows={12}
+            style={{ resize: 'vertical' }}
+            placeholder="user@gmail.com|secret123"
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              if (error) setError(null);
+            }}
+          />
+        </Field>
+      )}
+    </Modal>
   );
 }
 
@@ -352,10 +487,7 @@ function ProvisionModal({
 }) {
   const toast = useToast();
   const [quantity, setQuantity] = useState('1');
-  const [productId, setProductId] = useState('');
   const [workers, setWorkers] = useState('2');
-  const [headless, setHeadless] = useState(false);
-  const [proxy, setProxy] = useState('');
   const [bm, setBm] = useState<BmTestResponse | null>(null);
   const [bmError, setBmError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -397,16 +529,12 @@ function ProvisionModal({
       return;
     }
     const workersValue = Math.max(1, Math.min(8, Number.parseInt(workers, 10) || 2));
-    const productValue = Number.parseInt(productId, 10);
     setSubmitting(true);
     try {
       const result = await apiSend<{ jobId: number }>('/api/jobs', 'POST', {
         type: 'provision',
         quantity: units,
-        productId: Number.isFinite(productValue) && productValue > 0 ? productValue : undefined,
         workers: workersValue,
-        headless,
-        proxy: proxy.trim() || undefined,
       });
       setJobId(result.jobId);
       toast.success(`Закупка #${result.jobId} запущена`);
@@ -463,16 +591,6 @@ function ProvisionModal({
                 onChange={(event) => setQuantity(event.target.value)}
               />
             </Field>
-            <Field label="Продукт BM" htmlFor="product" hint={bm?.product ? bm.product.name : 'пусто — из настроек'}>
-              <input
-                id="product"
-                className="input"
-                type="number"
-                placeholder="из настроек"
-                value={productId}
-                onChange={(event) => setProductId(event.target.value)}
-              />
-            </Field>
             <Field label="Воркеры" htmlFor="workers" hint="параллельные регистрации, 1–8">
               <input
                 id="workers"
@@ -484,20 +602,6 @@ function ProvisionModal({
                 onChange={(event) => setWorkers(event.target.value)}
               />
             </Field>
-            <Field label="Прокси" htmlFor="proxy" hint="пусто — из настроек движка">
-              <input
-                id="proxy"
-                className="input"
-                placeholder="http://user:pass@host:port"
-                value={proxy}
-                onChange={(event) => setProxy(event.target.value)}
-              />
-            </Field>
-          </div>
-
-          <div className="row">
-            <Switch checked={headless} onChange={setHeadless} label="Headless" />
-            <span className="small">Headless (без окна браузера — выше риск бана)</span>
           </div>
 
           <div className="card" style={{ padding: 12 }}>
