@@ -5,6 +5,7 @@ import { todaySummary } from '@/src/adapters/db/repositories/requests';
 import { modelsSyncDue } from '@/src/jobs/models-sync';
 import { runtimeState } from '@/src/server/runtime';
 import { walletSnapshot } from '@/src/server/bm-wallet';
+import { env } from '@/src/lib/config';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,6 +45,7 @@ export const GET = api(async () => {
       request_id: row.requestId ?? null,
     })),
     runtime: {
+      mode: env.mode,
       warnings: state.buildWarnings,
       locked: state.locked,
       started_at: state.startedAt,

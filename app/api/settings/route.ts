@@ -34,6 +34,7 @@ export const GET = api(async () => {
   values['retention.requests_days'] ??= String(env.requestRetentionDays);
   values['gateway.rpm_limit'] ??= String(env.defaultRpm);
   return jsonBody({
+    mode: env.mode,
     values,
     secrets: {
       'bm.api_key': getSetting('bm.api_key') !== null,

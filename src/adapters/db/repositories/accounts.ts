@@ -179,6 +179,17 @@ export function listForBalanceSync(): Account[] {
     .map(toAccount);
 }
 
+/** SPEC §17.5: transfer export carries every usable account, including pending ones. */
+export function listForTransfer(): Account[] {
+  return db()
+    .select()
+    .from(accounts)
+    .where(and(isNotNull(accounts.passwordEnc), inArray(accounts.status, ['pending', 'active', 'cooldown', 'exhausted'])))
+    .orderBy(asc(accounts.id))
+    .all()
+    .map(toAccount);
+}
+
 export function listActiveEmails(): string[] {
   return db()
     .select({ email: accounts.email })

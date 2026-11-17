@@ -4,6 +4,7 @@ import { activeJobOfType, listJobs } from '@/src/adapters/db/repositories/jobs';
 import { createProvisionJob, runProvisionJob } from '@/src/jobs/provision';
 import { enginePreflightError } from '@/src/jobs/auth';
 import { getSetting } from '@/src/adapters/db/repositories/settings';
+import { env } from '@/src/lib/config';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +24,9 @@ export const GET = api(async () => jsonBody({ jobs: listJobs(20) }));
 export const POST = api(
   async (request) => {
     const params = await readJson(request, bodySchema);
+    if (env.mode === 'gateway') {
+      throw new ApiError('engine_disabled', 400, 'Режим gateway: закупка и регистрация выполняются только на локальном экземпляре.');
+    }
     if (getSetting('bm.api_key') === null) {
       throw new ApiError('bm_not_configured', 400, 'API-ключ BM не задан. Откройте «Настройки» и сохраните ключ.');
     }
