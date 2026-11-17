@@ -58,11 +58,13 @@ export function isAuthenticated(request: Request): boolean {
 
 export function sessionCookie(token: string): string {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+  const secure = env.secureCookie ? '; Secure' : '';
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${maxAge}`;
 }
 
 export function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  const secure = env.secureCookie ? '; Secure' : '';
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0`;
 }
 
 /** Password lives in `settings.admin_password_hash`; `.env.local` is only the bootstrap seed. */
@@ -105,13 +107,14 @@ export function resetLoginAttempts(): void {
 }
 
 /**
- * SPEC §22.6: mutations accept only the local origin or a request without Origin
- * (curl). Everything else is a CSRF failure.
+ * SPEC §22.6: mutations accept only the local origin, the configured public origin
+ * (ADR-025) or a request without Origin (curl). Everything else is a CSRF failure.
  */
 export function sameOrigin(request: Request): boolean {
   const origin = request.headers.get('origin');
   if (origin === null) return true;
   const allow = new Set([ORIGIN, `http://localhost:${env.port}`]);
+  if (env.publicOrigin) allow.add(env.publicOrigin);
   return allow.has(origin);
 }
 

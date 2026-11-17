@@ -35,8 +35,22 @@ const bool = z
   .pipe(z.boolean());
 
 const schema = z.object({
-  HH_PORT: z.coerce.number().int().min(1).max(65535).default(3210),
-  HH_HOST: z.string().default('127.0.0.1'),
+  // ADR-025: optional so platform PORT can take over; resolved below with gateway-aware host.
+  HH_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  HH_HOST: z.string().optional(),
+  PORT: z.preprocess(
+    (v) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? undefined : v),
+    z.coerce.number().int().min(1).max(65535).optional(),
+  ),
+  HH_MODE: z.enum(['full', 'gateway']).default('full'),
+  HH_PUBLIC_ORIGIN: z
+    .string()
+    .optional()
+    .transform((v) => (v ? v.replace(/\/+$/, '') : undefined))
+    .refine(
+      (v) => v === undefined || /^https?:\/\/[^/\s]+$/.test(v),
+      'HH_PUBLIC_ORIGIN must be an origin like https://hh.example.com',
+    ),
   HH_SECRET: z.string().min(16, 'HH_SECRET must be at least 16 characters (32+ bytes base64)'),
   HH_ADMIN_PASSWORD: z.string().optional(),
   HH_DB_PATH: z.string().default('./data/hh.db'),
@@ -63,9 +77,19 @@ if (!parsed.success) {
 
 const raw = parsed.data;
 
+// ADR-025: platform PORT (Railway) implies a non-loopback bind unless HH_HOST says otherwise.
+const platformPort = raw.PORT;
+const port = raw.HH_PORT ?? platformPort ?? 3210;
+const openHost = platformPort !== undefined || raw.HH_MODE === 'gateway' || raw.HH_ALLOW_REMOTE;
+const host = raw.HH_HOST || (openHost ? '0.0.0.0' : '127.0.0.1');
+const publicOrigin = raw.HH_PUBLIC_ORIGIN ?? null;
+
 export const env = {
-  port: raw.HH_PORT,
-  host: raw.HH_HOST,
+  port,
+  host,
+  mode: raw.HH_MODE,
+  publicOrigin,
+  secureCookie: publicOrigin?.startsWith('https://') ?? false,
   secret: raw.HH_SECRET,
   adminPassword: raw.HH_ADMIN_PASSWORD || '',
   dbPath: raw.HH_DB_PATH === ':memory:' ? ':memory:' : resolve(process.cwd(), raw.HH_DB_PATH),
