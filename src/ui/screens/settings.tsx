@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { apiSend, errorText } from '../api';
+import { DbImportModal } from '../db-import';
 import { fmtInt } from '../format';
 import { Page } from '../shell';
 import { useToast } from '../toast';
@@ -97,6 +98,7 @@ function SettingsLoaded({
   const [bmTest, setBmTest] = useState<BmTestResponse | null>(null);
   const [clearingLogs, setClearingLogs] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [dbImporting, setDbImporting] = useState(false);
 
   const update = <K extends keyof Form>(key: K, value: Form[K]): void => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -490,14 +492,22 @@ function SettingsLoaded({
           <a className="btn btn-secondary btn-sm" href="/api/accounts/export?format=transfer">
             Файл переноса
           </a>
+          <a className="btn btn-secondary btn-sm" href="/api/db/export">
+            Скачать БД
+          </a>
+          <Button size="sm" variant="secondary" onClick={() => setDbImporting(true)}>
+            Импорт БД
+          </Button>
           <Button size="sm" variant="danger" onClick={() => setClearingLogs(true)}>
             Очистить логи
           </Button>
           <span className="small faint">
-            экспорт — email|password; файл переноса — JSON с cookies для другого экземпляра (нужен тот же HH_SECRET)
+            экспорт — email|password; файл переноса — JSON с cookies; БД — всё состояние целиком (нужен тот же HH_SECRET)
           </span>
         </div>
       </div>
+
+      {dbImporting ? <DbImportModal onClose={() => setDbImporting(false)} /> : null}
 
       {clearingLogs ? (
         <Modal
