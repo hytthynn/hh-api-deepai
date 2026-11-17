@@ -117,6 +117,7 @@ export function recentErrors(limit = 5): LogRow[] {
 }
 
 export function purgeLogs(days: number): number {
+  if (days <= 0) return db().delete(logs).run().changes;
   const cutoff = Date.now() - days * 86_400_000;
   const result = db().delete(logs).where(lt(logs.ts, cutoff)).run();
   return result.changes;

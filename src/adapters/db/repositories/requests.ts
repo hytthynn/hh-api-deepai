@@ -294,6 +294,7 @@ export function todaySummary(now = Date.now()) {
 }
 
 export function purgeRequests(days: number): number {
+  if (days <= 0) return db().delete(requests).run().changes;
   const cutoff = Date.now() - days * 86_400_000;
   return db().delete(requests).where(lte(requests.ts, cutoff)).run().changes;
 }

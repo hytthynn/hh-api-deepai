@@ -1,5 +1,7 @@
 import { api, intParam, jsonBody, strParam } from '@/src/server/api';
 import { flushLogs, purgeLogs, queryLogs } from '@/src/adapters/db/repositories/logs';
+import { purgeRequests } from '@/src/adapters/db/repositories/requests';
+import { logger } from '@/src/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,12 +22,18 @@ export const GET = api(async (request) => {
   });
 });
 
-/** Settings → Данные → «Очистить логи». */
+/**
+ * Settings → Данные → «Очистить логи». The journal shown on «Логи» is `requests`, while
+ * `logs` holds diagnostics; the button must empty both, otherwise the table still shows rows.
+ */
 export const DELETE = api(
   async () => {
     flushLogs();
+    const requests = purgeRequests(0);
     const deleted = purgeLogs(0);
-    return jsonBody({ deleted });
+    // The entry below is written after the purge on purpose: it proves the log survived the clear.
+    logger.info('ui', `logs cleared: ${deleted} log rows, ${requests} request rows`);
+    return jsonBody({ deleted, deleted_requests: requests });
   },
   { mutation: true },
 );
