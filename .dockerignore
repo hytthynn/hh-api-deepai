@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+data
+prof
+engine
+.env
+.env.local
+.env.*.local
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+coverage
+docs
+tests
+ROADMAP.md
