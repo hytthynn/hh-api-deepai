@@ -93,7 +93,7 @@ export async function handleResponses(request: Request): Promise<Response> {
       requestId: ctx.requestId,
       signal: request.signal,
       stream: body.stream,
-      timeoutMs: env.upstreamTimeoutMs,
+      timeoutMs: getInt('gateway.upstream_timeout_ms', env.upstreamTimeoutMs),
     });
 
     if (run.kind === 'stream') {

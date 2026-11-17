@@ -26,6 +26,13 @@ export const GET = api(async () => {
     if (SECRET_SETTINGS.has(row.key)) continue;
     values[row.key] = row.value;
   }
+  // Runtime knobs fall back to the environment, so the form always shows what the gateway
+  // really uses even on a fresh install where nothing was ever saved.
+  values['gateway.upstream_timeout_ms'] ??= String(env.upstreamTimeoutMs);
+  values['gateway.slot_wait_ms'] ??= String(env.slotWaitMs);
+  values['retention.logs_days'] ??= String(env.logRetentionDays);
+  values['retention.requests_days'] ??= String(env.requestRetentionDays);
+  values['gateway.rpm_limit'] ??= String(env.defaultRpm);
   return jsonBody({
     values,
     secrets: {
@@ -34,12 +41,6 @@ export const GET = api(async () => {
     },
     masked: {
       'bm.api_key': maskSecret(getSetting('bm.api_key')),
-    },
-    // Retention is an environment concern (HH_LOG_RETENTION_DAYS / HH_REQUEST_RETENTION_DAYS),
-    // shown read-only in Настройки → Данные.
-    retention: {
-      logs_days: env.logRetentionDays,
-      requests_days: env.requestRetentionDays,
     },
   });
 });
@@ -50,7 +51,10 @@ const putSchema = z.object({
   'bm.verify_tls': z.boolean().optional(),
   'engine.workers': z.number().int().min(1).max(8).optional(),
   'engine.headless': z.boolean().optional(),
-  'engine.proxy': z.string().trim().max(300).optional(),
+  'gateway.upstream_timeout_ms': z.number().int().min(1_000).max(900_000).optional(),
+  'gateway.slot_wait_ms': z.number().int().min(0).max(600_000).optional(),
+  'retention.logs_days': z.number().int().min(1).max(3650).optional(),
+  'retention.requests_days': z.number().int().min(1).max(3650).optional(),
   'engine.restart_after': z.number().int().min(1).max(1000).optional(),
   'balance.sync_interval_min': z.number().int().min(1).max(1440).optional(),
   'gateway.default_model': z.string().trim().min(1).max(120).optional(),
@@ -96,11 +100,14 @@ export const PUT = api(
       ['bm.verify_tls', input['bm.verify_tls']],
       ['engine.workers', input['engine.workers']],
       ['engine.headless', input['engine.headless']],
-      ['engine.proxy', input['engine.proxy']],
       ['engine.restart_after', input['engine.restart_after']],
       ['balance.sync_interval_min', input['balance.sync_interval_min']],
       ['gateway.default_model', input['gateway.default_model']],
       ['gateway.rpm_limit', input['gateway.rpm_limit']],
+      ['gateway.upstream_timeout_ms', input['gateway.upstream_timeout_ms']],
+      ['gateway.slot_wait_ms', input['gateway.slot_wait_ms']],
+      ['retention.logs_days', input['retention.logs_days']],
+      ['retention.requests_days', input['retention.requests_days']],
       ['gateway.expose_disabled', input['gateway.expose_disabled']],
       ['responses.ttl_days', input['responses.ttl_days']],
     ];

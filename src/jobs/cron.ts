@@ -66,8 +66,8 @@ function runCleanup(): void {
   lastCleanupAt = Date.now();
   try {
     flushLogs();
-    const logs = purgeLogs(env.logRetentionDays);
-    const requests = purgeRequests(env.requestRetentionDays);
+    const logs = purgeLogs(getInt('retention.logs_days', env.logRetentionDays));
+    const requests = purgeRequests(getInt('retention.requests_days', env.requestRetentionDays));
     const responses = purgeResponses();
     const samples = purgeSamples(SAMPLE_RETENTION_DAYS);
     const jobs = purgeJobs(JOB_RETENTION_DAYS);

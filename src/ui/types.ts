@@ -178,7 +178,6 @@ export type SettingsResponse = {
   values: Record<string, string | null>;
   secrets: { 'bm.api_key': boolean; 'admin.password_hash': boolean };
   masked: { 'bm.api_key': string };
-  retention: { logs_days: number; requests_days: number };
 };
 
 export type BmTestResponse = {

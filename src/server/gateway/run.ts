@@ -4,6 +4,7 @@ import { GatewayError, UpstreamClientError } from '@/src/core/gateway/errors';
 import { classifyFailure, MAX_ATTEMPTS, MAX_MACHINE_ROTATIONS, type FailureClass } from '@/src/core/gateway/failover';
 import type { ChatRequest } from '@/src/core/gateway/types';
 import type { UpstreamStream } from '@/src/core/ports/upstream';
+import { getInt } from '@/src/adapters/db/repositories/settings';
 import { env } from '@/src/lib/config';
 import { logger } from '@/src/lib/logger';
 import { pickCandidates, getAccount } from '@/src/adapters/db/repositories/accounts';
@@ -104,7 +105,7 @@ type Picked = { account: Account; release: () => void };
 
 export async function runUpstream(request: ChatRequest, options: RunOptions): Promise<RunSuccess> {
   const excluded = new Set<number>(options.exclude ?? []);
-  const deadline = Date.now() + env.slotWaitMs;
+  const deadline = Date.now() + getInt('gateway.slot_wait_ms', env.slotWaitMs);
   let attempts = 0;
   let rotations = 0;
   let laneRetries = 0;

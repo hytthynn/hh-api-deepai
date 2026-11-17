@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { apiSend, errorText } from '../api';
 import { fmtInt } from '../format';
 import { Page } from '../shell';
@@ -15,14 +15,45 @@ type Form = {
   verifyTls: boolean;
   workers: string;
   headless: boolean;
-  proxy: string;
   restartAfter: string;
   syncInterval: string;
   defaultModel: string;
   rpm: string;
-  exposeDisabled: boolean;
   ttlDays: string;
+  exposeDisabled: boolean;
+  upstreamTimeoutSec: string;
+  slotWaitSec: string;
+  retentionLogs: string;
+  retentionRequests: string;
 };
+
+const DEFAULT_MODEL = 'glm-5.3-flash';
+
+function formFrom(values: Record<string, string | null>): Form {
+  return {
+    bmKey: '',
+    productId: values['bm.product_id'] ?? '578',
+    verifyTls: values['bm.verify_tls'] !== '0',
+    workers: values['engine.workers'] ?? '2',
+    headless: values['engine.headless'] === '1',
+    restartAfter: values['engine.restart_after'] ?? '10',
+    syncInterval: values['balance.sync_interval_min'] ?? '5',
+    defaultModel: values['gateway.default_model'] ?? DEFAULT_MODEL,
+    rpm: values['gateway.rpm_limit'] ?? '60',
+    ttlDays: values['responses.ttl_days'] ?? '7',
+    exposeDisabled: values['gateway.expose_disabled'] === '1',
+    upstreamTimeoutSec: String(Math.round(Number(values['gateway.upstream_timeout_ms'] ?? 300_000) / 1000)),
+    slotWaitSec: String(Math.round(Number(values['gateway.slot_wait_ms'] ?? 45_000) / 1000)),
+    retentionLogs: values['retention.logs_days'] ?? '14',
+    retentionRequests: values['retention.requests_days'] ?? '90',
+  };
+}
+
+function intOr(value: string, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
 
 export function SettingsScreen() {
   const settings = useApi<SettingsResponse>('/api/settings');
@@ -40,30 +71,13 @@ export function SettingsScreen() {
     return (
       <Page title="Настройки">
         <div className="panel">
-          <Skeleton rows={6} />
+          <Skeleton rows={8} />
         </div>
       </Page>
     );
   }
 
   return <SettingsLoaded data={settings.data} models={models.data} reload={settings.reload} />;
-}
-
-function formFrom(values: Record<string, string | null>): Form {
-  return {
-    bmKey: '',
-    productId: values['bm.product_id'] ?? '578',
-    verifyTls: values['bm.verify_tls'] !== '0',
-    workers: values['engine.workers'] ?? '2',
-    headless: values['engine.headless'] === '1',
-    proxy: values['engine.proxy'] ?? '',
-    restartAfter: values['engine.restart_after'] ?? '10',
-    syncInterval: values['balance.sync_interval_min'] ?? '5',
-    defaultModel: values['gateway.default_model'] ?? '',
-    rpm: values['gateway.rpm_limit'] ?? '60',
-    exposeDisabled: values['gateway.expose_disabled'] === '1',
-    ttlDays: values['responses.ttl_days'] ?? '7',
-  };
 }
 
 function SettingsLoaded({
@@ -76,35 +90,73 @@ function SettingsLoaded({
   reload: () => void;
 }) {
   const toast = useToast();
-  const [form, setForm] = useState<Form>(() => formFrom(data.values));
-  const [busy, setBusy] = useState<string | null>(null);
+  const [initial, setInitial] = useState<Form>(() => formFrom(data.values));
+  const [form, setForm] = useState<Form>(initial);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [bmTest, setBmTest] = useState<BmTestResponse | null>(null);
   const [clearingLogs, setClearingLogs] = useState(false);
-  const [password, setPassword] = useState('');
-  const [password2, setPassword2] = useState('');
-  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
 
   const update = <K extends keyof Form>(key: K, value: Form[K]): void => {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
-  const save = async (section: string, payload: Record<string, unknown>): Promise<boolean> => {
-    setBusy(section);
+  const dirty = useMemo(
+    () =>
+      form.bmKey.trim() !== '' ||
+      (Object.keys(initial) as Array<keyof Form>).some((key) => form[key] !== initial[key]),
+    [form, initial],
+  );
+
+  const payload = (): Record<string, unknown> => {
+    const body: Record<string, unknown> = {
+      'bm.product_id': intOr(form.productId, 578, 1, 1_000_000),
+      'bm.verify_tls': form.verifyTls,
+      'engine.workers': intOr(form.workers, 2, 1, 8),
+      'engine.headless': form.headless,
+      'engine.restart_after': intOr(form.restartAfter, 10, 1, 1000),
+      'balance.sync_interval_min': intOr(form.syncInterval, 5, 1, 1440),
+      'gateway.rpm_limit': intOr(form.rpm, 60, 1, 6000),
+      'gateway.upstream_timeout_ms': intOr(form.upstreamTimeoutSec, 300, 1, 900) * 1000,
+      'gateway.slot_wait_ms': intOr(form.slotWaitSec, 45, 0, 600) * 1000,
+      'retention.logs_days': intOr(form.retentionLogs, 14, 1, 3650),
+      'retention.requests_days': intOr(form.retentionRequests, 90, 1, 3650),
+      'gateway.expose_disabled': form.exposeDisabled,
+      'responses.ttl_days': intOr(form.ttlDays, 7, 1, 365),
+    };
+    const model = form.defaultModel.trim();
+    if (model) body['gateway.default_model'] = model;
+    const key = form.bmKey.trim();
+    if (key) body['bm.api_key'] = key;
+    return body;
+  };
+
+  const saveAll = async (): Promise<void> => {
+    setSaving(true);
     try {
-      const result = await apiSend<{ updated: string[] }>('/api/settings', 'PUT', payload);
-      toast.success(result.updated.length > 0 ? `Сохранено: ${result.updated.join(', ')}` : 'Изменений нет');
-      reload();
-      return true;
+      const result = await apiSend<{ updated: string[] }>('/api/settings', 'PUT', payload());
+      if (result.updated.length > 0) {
+        toast.success(`Сохранено параметров: ${result.updated.length}`);
+        reload();
+        setInitialForm(form);
+      } else {
+        toast.success('Изменений нет');
+      }
     } catch (error) {
       toast.error(errorText(error));
-      return false;
     } finally {
-      setBusy(null);
+      setSaving(false);
     }
   };
 
+  const setInitialForm = (next: Form): void => {
+    setForm({ ...next, bmKey: '' });
+    setInitial({ ...next, bmKey: '' });
+  };
+
   const testBm = async (): Promise<void> => {
-    setBusy('bm-test');
+    setTesting(true);
     try {
       const result = await apiSend<BmTestResponse>('/api/settings/bm/test', 'POST');
       setBmTest(result);
@@ -113,44 +165,38 @@ function SettingsLoaded({
     } catch (error) {
       toast.error(errorText(error));
     } finally {
-      setBusy(null);
+      setTesting(false);
     }
   };
 
   const clearLogs = async (): Promise<void> => {
-    setClearingLogs(false);
+    setClearing(true);
     try {
-      const result = await apiSend<{ deleted: number }>('/api/logs', 'DELETE');
-      toast.success(`Удалено записей: ${fmtInt(result.deleted)}`);
+      const result = await apiSend<{ deleted: number; deleted_requests: number }>('/api/logs', 'DELETE');
+      toast.success(`Удалено: ${fmtInt(result.deleted_requests)} запросов, ${fmtInt(result.deleted)} записей журнала`);
+      setClearingLogs(false);
     } catch (error) {
       toast.error(errorText(error));
-    }
-  };
-
-  const changePassword = async (): Promise<void> => {
-    setPasswordError(null);
-    if (password.length < 8) {
-      setPasswordError('Минимум 8 символов');
-      return;
-    }
-    if (password !== password2) {
-      setPasswordError('Пароли не совпадают');
-      return;
-    }
-    const ok = await save('security', { 'admin.password': password });
-    if (ok) {
-      setPassword('');
-      setPassword2('');
-      toast.success('Пароль обновлён');
+    } finally {
+      setClearing(false);
     }
   };
 
   const bmConfigured = data.secrets['bm.api_key'];
   const enabledModels = (models?.models ?? []).filter((model) => model.enabled);
   const modelOptions = enabledModels.length > 0 ? enabledModels : (models?.models ?? []);
+  const hasCurrentModel = modelOptions.some((model) => model.id === form.defaultModel);
 
   return (
-    <Page title="Настройки" subtitle="изменения применяются сразу">
+    <Page
+      title="Настройки"
+      subtitle={dirty ? 'есть несохранённые изменения' : 'все параметры сохраняются одной кнопкой'}
+      actions={
+        <Button variant="primary" loading={saving} onClick={() => void saveAll()}>
+          Сохранить
+        </Button>
+      }
+    >
       <div className="panel">
         <div className="panel-head">
           <div>
@@ -159,28 +205,12 @@ function SettingsLoaded({
               {bmConfigured ? `ключ сохранён (${data.masked['bm.api_key']})` : 'ключ не задан'}
             </div>
           </div>
-          <div className="row">
-            <Button size="sm" variant="secondary" loading={busy === 'bm-test'} onClick={() => void testBm()}>
-              Проверить
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              loading={busy === 'bm'}
-              onClick={() =>
-                void save('bm', {
-                  ...(form.bmKey.trim() ? { 'bm.api_key': form.bmKey.trim() } : {}),
-                  'bm.product_id': Math.max(1, Number.parseInt(form.productId, 10) || 578),
-                  'bm.verify_tls': form.verifyTls,
-                })
-              }
-            >
-              Сохранить
-            </Button>
-          </div>
+          <Button size="sm" variant="secondary" loading={testing} onClick={() => void testBm()}>
+            Проверить
+          </Button>
         </div>
 
-        <div className="grid-2">
+        <div className="form-grid">
           <Field
             label="API-ключ"
             htmlFor="bm-key"
@@ -207,7 +237,7 @@ function SettingsLoaded({
           </Field>
         </div>
 
-        <div className="row" style={{ marginTop: 12 }}>
+        <div className="row" style={{ marginTop: 16 }}>
           <Switch checked={form.verifyTls} onChange={(next) => update('verifyTls', next)} label="Проверять TLS" />
           <span className="small">Проверять TLS-сертификат BM</span>
         </div>
@@ -259,24 +289,9 @@ function SettingsLoaded({
             <div className="panel-title">Движок</div>
             <div className="small faint">Python-воркер регистрации; изменения применяются к следующему запуску</div>
           </div>
-          <Button
-            size="sm"
-            variant="primary"
-            loading={busy === 'engine'}
-            onClick={() =>
-              void save('engine', {
-                'engine.workers': Math.max(1, Math.min(8, Number.parseInt(form.workers, 10) || 2)),
-                'engine.headless': form.headless,
-                'engine.proxy': form.proxy.trim(),
-                'engine.restart_after': Math.max(1, Math.min(1000, Number.parseInt(form.restartAfter, 10) || 10)),
-              })
-            }
-          >
-            Сохранить
-          </Button>
         </div>
 
-        <div className="grid-2">
+        <div className="form-grid">
           <Field label="Воркеры" htmlFor="engine-workers" hint="параллельные браузеры, 1–8">
             <input
               id="engine-workers"
@@ -298,15 +313,6 @@ function SettingsLoaded({
               onChange={(event) => update('restartAfter', event.target.value)}
             />
           </Field>
-          <Field label="Прокси" htmlFor="engine-proxy" hint="http://user:pass@host:port, пусто — без прокси">
-            <input
-              id="engine-proxy"
-              className="input"
-              placeholder="http://user:pass@host:port"
-              value={form.proxy}
-              onChange={(event) => update('proxy', event.target.value)}
-            />
-          </Field>
           <div className="field">
             <span className="field-label">Headless</span>
             <div className="row" style={{ height: 36 }}>
@@ -317,24 +323,20 @@ function SettingsLoaded({
         </div>
       </div>
 
-      <div className="grid-2">
-        <div className="panel">
-          <div className="panel-head">
-            <div className="panel-title">Баланс</div>
-            <Button
-              size="sm"
-              variant="primary"
-              loading={busy === 'balance'}
-              onClick={() =>
-                void save('balance', {
-                  'balance.sync_interval_min': Math.max(1, Math.min(1440, Number.parseInt(form.syncInterval, 10) || 5)),
-                })
-              }
-            >
-              Сохранить
-            </Button>
+      <div className="panel">
+        <div className="panel-head">
+          <div>
+            <div className="panel-title">Баланс и шлюз</div>
+            <div className="small faint">проверка баланса, модели, лимиты и таймауты</div>
           </div>
-          <Field label="Интервал синхронизации, мин" htmlFor="balance-interval" hint="как часто проверять баланс аккаунтов">
+        </div>
+
+        <div className="form-grid">
+          <Field
+            label="Интервал синхронизации баланса, мин"
+            htmlFor="balance-interval"
+            hint="как часто проверять баланс аккаунтов, 1–1440"
+          >
             <input
               id="balance-interval"
               className="input"
@@ -345,78 +347,89 @@ function SettingsLoaded({
               onChange={(event) => update('syncInterval', event.target.value)}
             />
           </Field>
+          <Field label="Модель по умолчанию" htmlFor="gateway-model" hint="используется, если клиент не указал model">
+            <select
+              id="gateway-model"
+              className="select"
+              value={form.defaultModel}
+              onChange={(event) => update('defaultModel', event.target.value)}
+            >
+              {!hasCurrentModel && form.defaultModel ? (
+                <option value={form.defaultModel}>{form.defaultModel} (нет в каталоге)</option>
+              ) : null}
+              {modelOptions.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.id}
+                  {model.enabled ? '' : ' (скрыта)'}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Лимит запросов, RPM" htmlFor="gateway-rpm" hint="общий для всех ключей, 1–6000 запросов в минуту">
+            <input
+              id="gateway-rpm"
+              className="input"
+              type="number"
+              min={1}
+              max={6000}
+              value={form.rpm}
+              onChange={(event) => update('rpm', event.target.value)}
+            />
+          </Field>
+          <Field
+            label="Таймаут ответа апстрима, с"
+            htmlFor="gateway-timeout"
+            hint="сколько ждать DeepAI до первого байта и целиком, 1–900"
+          >
+            <input
+              id="gateway-timeout"
+              className="input"
+              type="number"
+              min={1}
+              max={900}
+              value={form.upstreamTimeoutSec}
+              onChange={(event) => update('upstreamTimeoutSec', event.target.value)}
+            />
+          </Field>
+          <Field
+            label="Ожидание свободного аккаунта, с"
+            htmlFor="gateway-slot-wait"
+            hint="сколько запрос ждёт слот, прежде чем вернуть 429 no_account_available, 0–600"
+          >
+            <input
+              id="gateway-slot-wait"
+              className="input"
+              type="number"
+              min={0}
+              max={600}
+              value={form.slotWaitSec}
+              onChange={(event) => update('slotWaitSec', event.target.value)}
+            />
+          </Field>
+          <Field
+            label="Хранить Responses, дней"
+            htmlFor="gateway-ttl"
+            hint="срок жизни сохранённого ответа: пока он не истёк, клиент может продолжить диалог по previous_response_id; 1–365"
+          >
+            <input
+              id="gateway-ttl"
+              className="input"
+              type="number"
+              min={1}
+              max={365}
+              value={form.ttlDays}
+              onChange={(event) => update('ttlDays', event.target.value)}
+            />
+          </Field>
         </div>
 
-        <div className="panel">
-          <div className="panel-head">
-            <div className="panel-title">Шлюз</div>
-            <Button
-              size="sm"
-              variant="primary"
-              loading={busy === 'gateway'}
-              onClick={() =>
-                void save('gateway', {
-                  ...(form.defaultModel ? { 'gateway.default_model': form.defaultModel } : {}),
-                  'gateway.rpm_limit': Math.max(1, Math.min(6000, Number.parseInt(form.rpm, 10) || 60)),
-                  'gateway.expose_disabled': form.exposeDisabled,
-                  'responses.ttl_days': Math.max(1, Math.min(365, Number.parseInt(form.ttlDays, 10) || 7)),
-                })
-              }
-            >
-              Сохранить
-            </Button>
-          </div>
-          <div className="stack-12">
-            <Field label="Модель по умолчанию" htmlFor="gateway-model" hint="используется, если клиент не указал model">
-              <select
-                id="gateway-model"
-                className="select"
-                value={form.defaultModel}
-                onChange={(event) => update('defaultModel', event.target.value)}
-              >
-                {modelOptions.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.id}
-                    {model.enabled ? '' : ' (скрыта)'}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field
-              label="Лимит запросов, RPM"
-              htmlFor="gateway-rpm"
-              hint="общий для всех ключей; 1–6000 запросов в минуту"
-            >
-              <input
-                id="gateway-rpm"
-                className="input"
-                type="number"
-                min={1}
-                max={6000}
-                value={form.rpm}
-                onChange={(event) => update('rpm', event.target.value)}
-              />
-            </Field>
-            <Field label="Хранить Responses, дней" htmlFor="gateway-ttl" hint="previous_response_id доступен в этом окне">
-              <input
-                id="gateway-ttl"
-                className="input"
-                type="number"
-                min={1}
-                max={365}
-                value={form.ttlDays}
-                onChange={(event) => update('ttlDays', event.target.value)}
-              />
-            </Field>
-            <div className="row">
-              <Switch
-                checked={form.exposeDisabled}
-                onChange={(next) => update('exposeDisabled', next)}
-                label="Отдавать скрытые модели в списке"
-              />
-              <span className="small muted">Показывать отключённые модели в /v1/models</span>
-            </div>
-          </div>
+        <div className="row" style={{ marginTop: 16 }}>
+          <Switch
+            checked={form.exposeDisabled}
+            onChange={(next) => update('exposeDisabled', next)}
+            label="Отдавать скрытые модели в списке"
+          />
+          <span className="small muted">Показывать отключённые модели в /v1/models</span>
         </div>
       </div>
 
@@ -424,24 +437,36 @@ function SettingsLoaded({
         <div className="panel-head">
           <div>
             <div className="panel-title">Данные</div>
-            <div className="small faint">ретеншн задаётся в .env.local (HH_LOG_RETENTION_DAYS / HH_REQUEST_RETENTION_DAYS)</div>
+            <div className="small faint">ретеншн, экспорт и очистка; значения по умолчанию приходят из .env.local</div>
           </div>
         </div>
-        <div className="grid-3">
-          <div className="field">
-            <span className="field-label">Логи</span>
-            <span className="mono">{fmtInt(data.retention.logs_days)} дней</span>
-          </div>
-          <div className="field">
-            <span className="field-label">Запросы</span>
-            <span className="mono">{fmtInt(data.retention.requests_days)} дней</span>
-          </div>
-          <div className="field">
-            <span className="field-label">Файлы</span>
-            <span className="mono small">data/hh.db, prof/</span>
-          </div>
+
+        <div className="form-grid">
+          <Field label="Хранить логи, дней" htmlFor="retention-logs" hint="диагностический журнал, 1–3650">
+            <input
+              id="retention-logs"
+              className="input"
+              type="number"
+              min={1}
+              max={3650}
+              value={form.retentionLogs}
+              onChange={(event) => update('retentionLogs', event.target.value)}
+            />
+          </Field>
+          <Field label="Хранить запросы, дней" htmlFor="retention-requests" hint="журнал запросов и статистика, 1–3650">
+            <input
+              id="retention-requests"
+              className="input"
+              type="number"
+              min={1}
+              max={3650}
+              value={form.retentionRequests}
+              onChange={(event) => update('retentionRequests', event.target.value)}
+            />
+          </Field>
         </div>
-        <div className="row" style={{ marginTop: 16 }}>
+
+        <div className="row row-wrap" style={{ marginTop: 16 }}>
           {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- это скачивание файла из API, не навигация */}
           <a className="btn btn-secondary btn-sm" href="/api/accounts/export">
             Экспорт аккаунтов
@@ -450,46 +475,6 @@ function SettingsLoaded({
             Очистить логи
           </Button>
           <span className="small faint">экспорт — email|password, по одному на строку</span>
-        </div>
-      </div>
-
-      <div className="panel">
-        <div className="panel-head">
-          <div>
-            <div className="panel-title">Безопасность</div>
-            <div className="small faint">пароль панели хранится как scrypt-хеш</div>
-          </div>
-          <Button size="sm" variant="primary" loading={busy === 'security'} onClick={() => void changePassword()}>
-            Сменить пароль
-          </Button>
-        </div>
-        <div className="grid-2">
-          <Field label="Новый пароль" htmlFor="admin-password" error={passwordError} hint="минимум 8 символов">
-            <input
-              id="admin-password"
-              className={`input${passwordError ? ' invalid' : ''}`}
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-                setPasswordError(null);
-              }}
-            />
-          </Field>
-          <Field label="Повторите пароль" htmlFor="admin-password-2">
-            <input
-              id="admin-password-2"
-              className="input"
-              type="password"
-              autoComplete="new-password"
-              value={password2}
-              onChange={(event) => {
-                setPassword2(event.target.value);
-                setPasswordError(null);
-              }}
-            />
-          </Field>
         </div>
       </div>
 
@@ -502,17 +487,22 @@ function SettingsLoaded({
               <Button variant="secondary" onClick={() => setClearingLogs(false)}>
                 Отмена
               </Button>
-              <Button variant="danger" onClick={() => void clearLogs()}>
+              <Button variant="danger" loading={clearing} onClick={() => void clearLogs()}>
                 Очистить
               </Button>
             </>
           }
         >
-          <div className="small">Все записи журнала будут удалены. История запросов и статистика останутся.</div>
+          <div className="small">
+            Будут удалены журнал запросов (таблица на экране «Логи») и диагностические записи. Статистика,
+            которая считается по запросам, обнулится. Аккаунты, ключи и модели не затрагиваются.
+          </div>
         </Modal>
       ) : null}
 
-      {modelOptions.length === 0 ? <EmptyState title="Каталог моделей пуст" hint="Синхронизируйте модели на экране «Модели»." /> : null}
+      {modelOptions.length === 0 ? (
+        <EmptyState title="Каталог моделей пуст" hint="Синхронизируйте модели на экране «Модели»." />
+      ) : null}
     </Page>
   );
 }

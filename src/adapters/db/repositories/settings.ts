@@ -55,6 +55,11 @@ export function deleteSetting(key: string): void {
   db().delete(settings).where(eq(settings.key, key)).run();
 }
 
+/** Test helper: drop every stored override so the env fallbacks apply again. */
+export function clearSettings(): void {
+  db().delete(settings).run();
+}
+
 export function settingExists(key: string): boolean {
   return db().select({ key: settings.key }).from(settings).where(eq(settings.key, key)).get() !== undefined;
 }

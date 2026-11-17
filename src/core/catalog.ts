@@ -70,7 +70,6 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   'bm.verify_tls': '1',
   'engine.workers': '2',
   'engine.headless': '0',
-  'engine.proxy': '',
   'engine.restart_after': '10',
   'balance.sync_interval_min': '5',
   'gateway.default_model': 'glm-5.3-flash',

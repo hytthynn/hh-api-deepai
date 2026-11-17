@@ -16,6 +16,7 @@ import {
   type GatewayContext,
 } from './pipeline';
 import { runUpstream } from './run';
+import { getInt } from '@/src/adapters/db/repositories/settings';
 import { env } from '@/src/lib/config';
 import { logger } from '@/src/lib/logger';
 
@@ -194,7 +195,7 @@ export async function handleChat(request: Request): Promise<Response> {
       requestId: ctx.requestId,
       signal: request.signal,
       stream: body.stream,
-      timeoutMs: env.upstreamTimeoutMs,
+      timeoutMs: getInt('gateway.upstream_timeout_ms', env.upstreamTimeoutMs),
     });
 
     if (run.kind === 'stream') {
