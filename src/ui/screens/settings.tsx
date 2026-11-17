@@ -109,13 +109,10 @@ function SettingsLoaded({
     [form, initial],
   );
 
+  const gateway = data.mode === 'gateway';
+
   const payload = (): Record<string, unknown> => {
     const body: Record<string, unknown> = {
-      'bm.product_id': intOr(form.productId, 578, 1, 1_000_000),
-      'bm.verify_tls': form.verifyTls,
-      'engine.workers': intOr(form.workers, 2, 1, 8),
-      'engine.headless': form.headless,
-      'engine.restart_after': intOr(form.restartAfter, 10, 1, 1000),
       'balance.sync_interval_min': intOr(form.syncInterval, 5, 1, 1440),
       'gateway.rpm_limit': intOr(form.rpm, 60, 1, 6000),
       'gateway.upstream_timeout_ms': intOr(form.upstreamTimeoutSec, 300, 1, 900) * 1000,
@@ -125,10 +122,18 @@ function SettingsLoaded({
       'gateway.expose_disabled': form.exposeDisabled,
       'responses.ttl_days': intOr(form.ttlDays, 7, 1, 365),
     };
+    // ADR-025: gateway mode has no BM/engine panels — never send their keys.
+    if (!gateway) {
+      body['bm.product_id'] = intOr(form.productId, 578, 1, 1_000_000);
+      body['bm.verify_tls'] = form.verifyTls;
+      body['engine.workers'] = intOr(form.workers, 2, 1, 8);
+      body['engine.headless'] = form.headless;
+      body['engine.restart_after'] = intOr(form.restartAfter, 10, 1, 1000);
+      const key = form.bmKey.trim();
+      if (key) body['bm.api_key'] = key;
+    }
     const model = form.defaultModel.trim();
     if (model) body['gateway.default_model'] = model;
-    const key = form.bmKey.trim();
-    if (key) body['bm.api_key'] = key;
     return body;
   };
 
@@ -190,13 +195,20 @@ function SettingsLoaded({
   return (
     <Page
       title="Настройки"
-      subtitle={dirty ? 'есть несохранённые изменения' : 'все параметры сохраняются одной кнопкой'}
+      subtitle={
+        gateway
+          ? 'режим gateway: закупка и регистрация выполняются на локальном экземпляре'
+          : dirty
+            ? 'есть несохранённые изменения'
+            : 'все параметры сохраняются одной кнопкой'
+      }
       actions={
         <Button variant="primary" loading={saving} onClick={() => void saveAll()}>
           Сохранить
         </Button>
       }
     >
+      {!gateway ? (
       <div className="panel">
         <div className="panel-head">
           <div>
@@ -282,7 +294,9 @@ function SettingsLoaded({
           </div>
         ) : null}
       </div>
+      ) : null}
 
+      {!gateway ? (
       <div className="panel">
         <div className="panel-head">
           <div>
@@ -322,6 +336,7 @@ function SettingsLoaded({
           </div>
         </div>
       </div>
+      ) : null}
 
       <div className="panel">
         <div className="panel-head">
@@ -471,10 +486,16 @@ function SettingsLoaded({
           <a className="btn btn-secondary btn-sm" href="/api/accounts/export">
             Экспорт аккаунтов
           </a>
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- это скачивание файла из API, не навигация */}
+          <a className="btn btn-secondary btn-sm" href="/api/accounts/export?format=transfer">
+            Файл переноса
+          </a>
           <Button size="sm" variant="danger" onClick={() => setClearingLogs(true)}>
             Очистить логи
           </Button>
-          <span className="small faint">экспорт — email|password, по одному на строку</span>
+          <span className="small faint">
+            экспорт — email|password; файл переноса — JSON с cookies для другого экземпляра (нужен тот же HH_SECRET)
+          </span>
         </div>
       </div>
 

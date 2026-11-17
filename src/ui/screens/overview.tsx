@@ -107,7 +107,9 @@ export function OverviewScreen() {
               {fmtTheos(overview.data?.balance_theos)} <span className="small faint">Theos</span>
             </div>
             <div className="card-hint">
-              BM-кошелёк: {overview.data?.bm.configured ? fmtUsd(overview.data.bm.wallet_usd) : 'ключ не задан'}
+              {overview.data?.runtime.mode === 'gateway'
+                ? 'режим gateway · регистрация локально'
+                : `BM-кошелёк: ${overview.data?.bm.configured ? fmtUsd(overview.data.bm.wallet_usd) : 'ключ не задан'}`}
             </div>
           </div>
           <div className="card">
@@ -287,10 +289,17 @@ export function OverviewScreen() {
             <div className="panel-title">Быстрые действия</div>
           </div>
           <div className="stack-12">
-            <Link href="/accounts?provision=1" className="btn btn-primary" style={{ width: '100%' }}>
-              <Icon name="plus" size={14} />
-              Добавить аккаунты
-            </Link>
+            {overview.data?.runtime.mode === 'gateway' ? (
+              <Link href="/accounts?import=1" className="btn btn-primary" style={{ width: '100%' }}>
+                <Icon name="plus" size={14} />
+                Импорт файла переноса
+              </Link>
+            ) : (
+              <Link href="/accounts?provision=1" className="btn btn-primary" style={{ width: '100%' }}>
+                <Icon name="plus" size={14} />
+                Добавить аккаунты
+              </Link>
+            )}
             <Link href="/keys?new=1" className="btn btn-secondary" style={{ width: '100%' }}>
               <Icon name="keys" size={14} />
               Создать ключ

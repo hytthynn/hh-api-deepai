@@ -1,3 +1,5 @@
+export type DeployMode = 'full' | 'gateway';
+
 export type AccountStatus = 'pending' | 'active' | 'cooldown' | 'exhausted' | 'dead' | 'disabled';
 
 export type AccountPublic = {
@@ -153,7 +155,7 @@ export type OverviewResponse = {
     theos_spent: number;
   };
   recent_errors: Array<{ ts: number; scope: string; message: string; request_id: string | null }>;
-  runtime: { warnings: string[]; locked: boolean; started_at: number; models_sync_due: boolean };
+  runtime: { mode: DeployMode; warnings: string[]; locked: boolean; started_at: number; models_sync_due: boolean };
 };
 
 export type StatsResponse = {
@@ -175,6 +177,7 @@ export type StatsResponse = {
 };
 
 export type SettingsResponse = {
+  mode: DeployMode;
   values: Record<string, string | null>;
   secrets: { 'bm.api_key': boolean; 'admin.password_hash': boolean };
   masked: { 'bm.api_key': string };
@@ -196,6 +199,7 @@ export type BmTestResponse = {
 };
 
 export type EngineResponse = {
+  mode: DeployMode;
   health: { python: string; playwright: string; chrome: string; chrome_ok: boolean } | null;
   chrome_ok: boolean;
   settings: { workers: number; restartAfter: number; headless: boolean; proxy: string | null };

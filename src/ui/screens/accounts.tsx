@@ -41,14 +41,20 @@ const STAGE_LABEL: Record<string, string> = {
 
 const TERMINAL: Job['status'][] = ['done', 'failed', 'cancelled'];
 
-export function AccountsScreen({ initialProvision = false }: { initialProvision?: boolean }) {
+export function AccountsScreen({
+  initialProvision = false,
+  initialImport = false,
+}: {
+  initialProvision?: boolean;
+  initialImport?: boolean;
+}) {
   const toast = useToast();
   const [status, setStatus] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [provisionOpen, setProvisionOpen] = useState(initialProvision);
-  const [importOpen, setImportOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(initialImport);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<AccountPublic | null>(null);
   const now = useNow(1_000);
@@ -145,6 +151,7 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
 
   const chromeOk = engine.data?.chrome_ok ?? false;
   const chromePath = engine.data?.health?.chrome ?? '';
+  const gateway = engine.data?.mode === 'gateway';
   const rows = accounts.data?.rows ?? [];
   const total = accounts.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / 50));
@@ -163,14 +170,16 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
             <Icon name="plus" size={14} />
             Импорт
           </Button>
-          <Button variant="primary" size="sm" onClick={() => setProvisionOpen(true)} disabled={!chromeOk}>
-            <Icon name="plus" size={14} />
-            Добавить аккаунты
-          </Button>
+          {!gateway ? (
+            <Button variant="primary" size="sm" onClick={() => setProvisionOpen(true)} disabled={!chromeOk}>
+              <Icon name="plus" size={14} />
+              Добавить аккаунты
+            </Button>
+          ) : null}
         </>
       }
     >
-      {engine.data && !chromeOk ? (
+      {engine.data && !chromeOk && !gateway ? (
         <div className="card" style={{ borderColor: 'var(--warn)', background: 'var(--warn-ghost)' }}>
           <div className="card-label" style={{ color: 'var(--warn)' }}>
             Регистрация недоступна
@@ -218,11 +227,23 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
         ) : rows.length === 0 ? (
           <EmptyState
             title="Аккаунтов нет"
-            hint={query ? 'Ничего не найдено по этому запросу.' : 'Купите логины в BM, импортируйте готовый список или добавьте вручную.'}
+            hint={
+              query
+                ? 'Ничего не найдено по этому запросу.'
+                : gateway
+                  ? 'Импортируйте файл переноса, созданный на локальном экземпляре («Настройки → Данные»).'
+                  : 'Купите логины в BM, импортируйте готовый список или добавьте вручную.'
+            }
             action={
-              <Button variant="primary" size="sm" onClick={() => setProvisionOpen(true)} disabled={!chromeOk}>
-                Добавить аккаунты
-              </Button>
+              gateway ? (
+                <Button variant="primary" size="sm" onClick={() => setImportOpen(true)}>
+                  Импорт файла переноса
+                </Button>
+              ) : (
+                <Button variant="primary" size="sm" onClick={() => setProvisionOpen(true)} disabled={!chromeOk}>
+                  Добавить аккаунты
+                </Button>
+              )
             }
           />
         ) : (
@@ -323,6 +344,7 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
 
       {importOpen ? (
         <ImportModal
+          gateway={gateway}
           onClose={() => {
             setImportOpen(false);
             accounts.reload();
@@ -359,22 +381,48 @@ export function AccountsScreen({ initialProvision = false }: { initialProvision?
 /* Import                                                              */
 /* ------------------------------------------------------------------ */
 
-function ImportModal({ onClose }: { onClose: () => void }) {
+function ImportModal({ gateway, onClose }: { gateway: boolean; onClose: () => void }) {
   const toast = useToast();
+  const [kind, setKind] = useState<'text' | 'transfer'>(gateway ? 'transfer' : 'text');
   const [text, setText] = useState('');
+  const [transfer, setTransfer] = useState<unknown>(null);
+  const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ImportResponse | null>(null);
 
+  // B-028: the modal can auto-open before /api/engine answers, so `gateway` flips
+  // after mount; derive the effective kind instead of trusting the initial state.
+  const activeKind = gateway ? 'transfer' : kind;
+
+  const pickFile = async (file: File | undefined): Promise<void> => {
+    if (!file) return;
+    setError(null);
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      setTransfer(parsed);
+      setFileName(file.name);
+    } catch {
+      setTransfer(null);
+      setFileName('');
+      setError('Файл не является корректным JSON');
+    }
+  };
+
   const submit = async (): Promise<void> => {
-    if (text.trim().length === 0) {
+    if (activeKind === 'text' && text.trim().length === 0) {
       setError('Вставьте хотя бы одну строку');
+      return;
+    }
+    if (activeKind === 'transfer' && transfer === null) {
+      setError('Выберите файл переноса');
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const payload = await apiSend<ImportResponse>('/api/accounts/import', 'POST', { text });
+      const body = activeKind === 'text' ? { text } : { transfer };
+      const payload = await apiSend<ImportResponse>('/api/accounts/import', 'POST', body);
       setResult(payload);
       toast.success(
         payload.jobId === null
@@ -390,7 +438,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal
-      title="Импорт аккаунтов"
+      title={gateway ? 'Импорт файла переноса' : 'Импорт аккаунтов'}
       onClose={onClose}
       wide
       footer={
@@ -446,7 +494,9 @@ function ImportModal({ onClose }: { onClose: () => void }) {
                   {result.invalid.map((line) => (
                     <tr key={`invalid-${line}`}>
                       <td className="mono small">{line}</td>
-                      <td className="small faint">не email|пароль</td>
+                      <td className="small faint">
+                        {activeKind === 'transfer' ? 'не расшифровывается (другой HH_SECRET?)' : 'не email|пароль'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -460,30 +510,80 @@ function ImportModal({ onClose }: { onClose: () => void }) {
             </div>
           ) : (
             <div className="small faint">
-              Новых аккаунтов нет — входить не в кого. Дубликаты пропущены.
+              {activeKind === 'transfer' && result.created > 0
+                ? 'Аккаунты перенесены сразу активными — вход через браузер не требуется.'
+                : 'Новых аккаунтов нет — входить не в кого. Дубликаты пропущены.'}
             </div>
           )}
         </div>
       ) : (
-        <Field
-          label="Список логинов"
-          htmlFor="import-text"
-          hint="email|password или email:password, по одному на строку; дубликаты пропускаются. Каждый новый аккаунт сразу проходит вход через браузер."
-          error={error}
-        >
-          <textarea
-            id="import-text"
-            className={`input mono${error ? ' invalid' : ''}`}
-            rows={12}
-            style={{ resize: 'vertical' }}
-            placeholder="user@gmail.com|secret123"
-            value={text}
-            onChange={(event) => {
-              setText(event.target.value);
-              if (error) setError(null);
-            }}
-          />
-        </Field>
+        <div className="stack-12">
+          {!gateway ? (
+            <div className="row">
+              <button
+                type="button"
+                className={`chip${activeKind === 'text' ? ' active' : ''}`}
+                onClick={() => {
+                  setKind('text');
+                  setError(null);
+                }}
+              >
+                Список логинов
+              </button>
+              <button
+                type="button"
+                className={`chip${activeKind === 'transfer' ? ' active' : ''}`}
+                onClick={() => {
+                  setKind('transfer');
+                  setError(null);
+                }}
+              >
+                Файл переноса
+              </button>
+            </div>
+          ) : null}
+          {activeKind === 'text' ? (
+            <Field
+              label="Список логинов"
+              htmlFor="import-text"
+              hint="email|password или email:password, по одному на строку; дубликаты пропускаются. Каждый новый аккаунт сразу проходит вход через браузер."
+              error={error}
+            >
+              <textarea
+                id="import-text"
+                className={`input mono${error ? ' invalid' : ''}`}
+                rows={12}
+                style={{ resize: 'vertical' }}
+                placeholder="user@gmail.com|secret123"
+                value={text}
+                onChange={(event) => {
+                  setText(event.target.value);
+                  if (error) setError(null);
+                }}
+              />
+            </Field>
+          ) : (
+            <Field
+              label="Файл переноса"
+              htmlFor="import-transfer"
+              hint="JSON из «Настройки → Данные → Файл переноса» на локальном экземпляре. На этом экземпляре должен быть тот же HH_SECRET."
+              error={error}
+            >
+              <input
+                id="import-transfer"
+                className="input"
+                type="file"
+                accept=".json,application/json"
+                onChange={(event) => void pickFile(event.target.files?.[0])}
+              />
+              {fileName ? (
+                <div className="small faint mono" style={{ marginTop: 6 }}>
+                  {fileName}
+                </div>
+              ) : null}
+            </Field>
+          )}
+        </div>
       )}
     </Modal>
   );
